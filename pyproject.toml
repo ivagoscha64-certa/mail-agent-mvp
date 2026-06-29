@@ -1,0 +1,28 @@
+[project]
+name = "mail-agent-mvp"
+version = "0.1.0"
+description = "Read-only MVP scaffold for a Mail.ru IMAP + SQLite + Telegram mail agent."
+requires-python = ">=3.11"
+dependencies = [
+  "python-dotenv>=1.0.1",
+  "python-telegram-bot>=21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+mail-agent = "mail_agent.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mail_agent"]
