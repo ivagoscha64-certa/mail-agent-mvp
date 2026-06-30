@@ -10,6 +10,16 @@ from mail_agent.models import AgentMode
 
 
 DEFAULT_PROJECT_DIR = Path(r"E:\AI\mail-agent-mvp")
+GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+
+
+@dataclass(frozen=True)
+class GmailApiConfig:
+    provider: str
+    account_email: str
+    credentials_path: Path
+    token_path: Path
+    scopes: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -33,6 +43,8 @@ class TelegramConfig:
 class Settings:
     mode: AgentMode
     db_path: Path
+    mail_backend: str
+    gmail_api: GmailApiConfig
     imap_account: ImapAccountConfig
     telegram: TelegramConfig
 
@@ -53,17 +65,36 @@ def load_settings(env_file: Path | None = None) -> Settings:
         )
     )
 
-    account_email = os.getenv("IMAP_ACCOUNT_EMAIL", "iva196464@gmail.com")
+    gmail_account_email = os.getenv("GMAIL_ACCOUNT_EMAIL", "iva196464@gmail.com")
+    imap_account_email = os.getenv("IMAP_ACCOUNT_EMAIL", gmail_account_email)
     return Settings(
         mode=mode,
         db_path=db_path,
+        mail_backend=os.getenv("MAIL_BACKEND", "gmail_api"),
+        gmail_api=GmailApiConfig(
+            provider="gmail",
+            account_email=gmail_account_email,
+            credentials_path=Path(
+                os.getenv(
+                    "GMAIL_CREDENTIALS_PATH",
+                    str(DEFAULT_PROJECT_DIR / "secrets" / "gmail-credentials.json"),
+                )
+            ),
+            token_path=Path(
+                os.getenv(
+                    "GMAIL_TOKEN_PATH",
+                    str(DEFAULT_PROJECT_DIR / "secrets" / "gmail-token.json"),
+                )
+            ),
+            scopes=(GMAIL_READONLY_SCOPE,),
+        ),
         imap_account=ImapAccountConfig(
             provider=os.getenv("IMAP_PROVIDER", "gmail"),
-            account_email=account_email,
+            account_email=imap_account_email,
             imap_host=os.getenv("IMAP_HOST", "imap.gmail.com"),
             imap_port=int(os.getenv("IMAP_PORT", "993")),
             imap_timeout_seconds=int(os.getenv("IMAP_TIMEOUT_SECONDS", "15")),
-            imap_username=os.getenv("IMAP_USERNAME", account_email),
+            imap_username=os.getenv("IMAP_USERNAME", imap_account_email),
             imap_password=os.getenv("IMAP_PASSWORD", ""),
         ),
         telegram=TelegramConfig(

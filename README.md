@@ -1,6 +1,6 @@
 # Mail Agent MVP
 
-Read-only MVP for a personal mail agent: Python, SQLite, Telegram bot, and IMAP.
+Read-only MVP for a personal mail agent: Python, SQLite, Telegram bot, Gmail API, and IMAP fallback.
 
 Current first test account:
 
@@ -20,7 +20,8 @@ The starter mode is strictly read-only:
 
 - `src/mail_agent/config.py` - environment-based configuration.
 - `src/mail_agent/safety.py` - central read-only safety policy.
-- `src/mail_agent/mail/imap_client.py` - read-only IMAP connector.
+- `src/mail_agent/mail/gmail_api.py` - read-only Gmail API connector.
+- `src/mail_agent/mail/imap_client.py` - read-only IMAP fallback connector.
 - `src/mail_agent/db.py` and `src/mail_agent/schema.sql` - SQLite storage.
 - `src/mail_agent/telegram_bot.py` - basic Telegram commands.
 - `src/mail_agent/classifier.py` - first rule-based classifications.
@@ -38,7 +39,19 @@ mail-agent init-db
 mail-agent status
 ```
 
-For Gmail IMAP, fill `IMAP_PASSWORD` in `.env` with a Google app password, then run:
+For Gmail API, put the OAuth client JSON here:
+
+```text
+E:\AI\mail-agent-mvp\secrets\gmail-credentials.json
+```
+
+Then authorize once:
+
+```powershell
+mail-agent auth-gmail
+```
+
+After authorization, read recent mail:
 
 ```powershell
 mail-agent check-mail --limit 10
@@ -50,17 +63,24 @@ Telegram bot starts only when `TELEGRAM_BOT_TOKEN` is filled:
 mail-agent bot
 ```
 
-## Gmail Access
+## Gmail API Access
 
-For `iva196464@gmail.com`, use a Google app password, not the normal account password.
+For `iva196464@gmail.com`, the preferred path is Gmail API over HTTPS.
 
-Typical path in Google Account:
+Required local files:
 
 ```text
-Google Account -> Security -> 2-Step Verification -> App passwords
+secrets\gmail-credentials.json  # downloaded OAuth client from Google Cloud
+secrets\gmail-token.json        # created locally after browser authorization
 ```
 
-If app passwords are unavailable, enable 2-Step Verification first. Some Google accounts may not show app passwords if the account is managed by an organization or has a security policy that blocks them.
+The app requests only this scope:
+
+```text
+https://www.googleapis.com/auth/gmail.readonly
+```
+
+That means read-only Gmail access: no sending, no deleting, no moving messages, no spam actions.
 
 ## Safety
 

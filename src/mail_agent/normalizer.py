@@ -47,6 +47,7 @@ def normalize_imap_message(
     uid: str,
     folder: str,
     message: EmailMessage,
+    thread_id: str | None = None,
 ) -> NormalizedMessage:
     html = _payload_text(message, "text/html")
     link_extractor = LinkExtractor()
@@ -65,7 +66,7 @@ def normalize_imap_message(
         account=account,
         message_uid=uid,
         message_id=message.get("Message-ID"),
-        thread_id=message.get("In-Reply-To") or message.get("References"),
+        thread_id=thread_id or message.get("In-Reply-To") or message.get("References"),
         sender=message.get("From", ""),
         recipients=recipients,
         subject=message.get("Subject", ""),

@@ -10,3 +10,4 @@ data/*.sqlite3
 data/*.sqlite3-journal
 data/*.db
 logs/*.log
+secrets/*.json
