@@ -15,7 +15,12 @@ from mail_agent.telegram_bot import run_bot
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mail-agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("auth-gmail")
+    auth_gmail = subparsers.add_parser("auth-gmail")
+    auth_gmail.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Print the authorization URL instead of opening the default browser.",
+    )
     subparsers.add_parser("init-db")
     subparsers.add_parser("status")
     check_mail = subparsers.add_parser("check-mail")
@@ -28,7 +33,9 @@ def main() -> None:
 
     if args.command == "auth-gmail":
         try:
-            GmailApiClient(settings.gmail_api, safety).authorize()
+            GmailApiClient(settings.gmail_api, safety).authorize(
+                open_browser=not args.no_browser
+            )
         except RuntimeError as exc:
             raise SystemExit(f"ERROR: {exc}") from None
         print(f"Authorized Gmail API token: {settings.gmail_api.token_path}")

@@ -23,8 +23,8 @@ class GmailApiClient:
         self.config = config
         self.safety = safety
 
-    def authorize(self) -> None:
-        credentials = load_or_create_credentials(self.config)
+    def authorize(self, *, open_browser: bool = True) -> None:
+        credentials = load_or_create_credentials(self.config, open_browser=open_browser)
         self.config.token_path.parent.mkdir(parents=True, exist_ok=True)
         self.config.token_path.write_text(credentials.to_json(), encoding="utf-8")
 
@@ -78,7 +78,9 @@ class GmailApiClient:
         self.safety.assert_allowed(UnsafeAction.UNSUBSCRIBE)
 
 
-def load_or_create_credentials(config: GmailApiConfig) -> Credentials:
+def load_or_create_credentials(
+    config: GmailApiConfig, *, open_browser: bool = True
+) -> Credentials:
     credentials = _load_existing_token(config.token_path, config.scopes)
     if credentials and credentials.valid:
         return credentials
@@ -99,7 +101,7 @@ def load_or_create_credentials(config: GmailApiConfig) -> Credentials:
         str(config.credentials_path),
         list(config.scopes),
     )
-    return flow.run_local_server(port=0)
+    return flow.run_local_server(port=0, open_browser=open_browser)
 
 
 def _load_existing_token(token_path: Path, scopes: tuple[str, ...]) -> Credentials | None:
