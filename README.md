@@ -69,6 +69,15 @@ To send a one-time summary:
 mail-agent send-summary --limit 10
 ```
 
+To read recent Gmail messages and send Telegram only for new important messages:
+
+```powershell
+mail-agent notify-new --limit 25
+```
+
+`notify-new` is idempotent: already stored Gmail messages are skipped, and Telegram
+notifications are recorded in SQLite so old important messages are not sent again.
+
 If `TELEGRAM_ALLOWED_CHAT_ID` is not known yet:
 
 1. Create a bot with Telegram `@BotFather`.
@@ -81,6 +90,75 @@ mail-agent telegram-chat-id
 ```
 
 5. Put the printed `chat_id` into `.env` as `TELEGRAM_ALLOWED_CHAT_ID`.
+
+## Windows Task Scheduler
+
+The project includes a safe helper script for scheduling the existing read-only
+notification command:
+
+```powershell
+cd E:\AI\mail-agent-mvp
+.\scripts\Register-NotifyNewTask.ps1
+```
+
+By default the script is a dry run. It checks the project path, virtualenv
+Python, and `MAIL_AGENT_MODE`, then prints the Task Scheduler action without
+creating anything:
+
+```powershell
+.\.venv\Scripts\python.exe -m mail_agent notify-new --limit 25
+```
+
+To create or update the scheduled task explicitly:
+
+```powershell
+.\scripts\Register-NotifyNewTask.ps1 -Register
+```
+
+The default task name is `MailAgentNotifyNew`, and the default interval is every
+10 minutes. To use another interval:
+
+```powershell
+.\scripts\Register-NotifyNewTask.ps1 -Register -EveryMinutes 30
+```
+
+To inspect or disable the schedule:
+
+```powershell
+.\scripts\Register-NotifyNewTask.ps1 -Status
+.\scripts\Register-NotifyNewTask.ps1 -Unregister
+```
+
+The scheduled task only runs `notify-new`. It does not add email sending,
+deletion, moving, spam, or unsubscribe actions.
+
+Every `notify-new` run appends a JSONL result record here:
+
+```text
+E:\AI\mail-agent-mvp\data\notify-new-runs.jsonl
+```
+
+The same run result is also stored in SQLite table `run_log`, including:
+
+- `started_at` and `finished_at`;
+- `new_count`, `existing_count`, and `notified_count`;
+- `status` as `completed` or `failed`;
+- `error_phase`, `error_type`, and `error` for Gmail or Telegram failures.
+
+To inspect the latest scheduled-run health:
+
+```powershell
+mail-agent status
+```
+
+`status` prints the latest `notify-new` run and the latest successful
+`notify-new` run when available.
+
+To inspect recent `notify-new` run history from local SQLite only:
+
+```powershell
+mail-agent runs --limit 10
+```
 
 ## Gmail API Access
 

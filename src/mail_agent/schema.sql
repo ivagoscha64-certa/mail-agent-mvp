@@ -41,6 +41,35 @@ CREATE TABLE IF NOT EXISTS message_classifications (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS telegram_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_row_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    account TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    sent_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(message_row_id, chat_id)
+);
+
+CREATE TABLE IF NOT EXISTS run_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    command TEXT NOT NULL,
+    status TEXT NOT NULL,
+    account TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    limit_value INTEGER,
+    new_count INTEGER NOT NULL DEFAULT 0,
+    existing_count INTEGER NOT NULL DEFAULT 0,
+    notified_count INTEGER NOT NULL DEFAULT 0,
+    error_phase TEXT,
+    error_type TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS drafts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_row_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -106,4 +135,3 @@ CREATE TABLE IF NOT EXISTS audit_log (
     metadata_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
-

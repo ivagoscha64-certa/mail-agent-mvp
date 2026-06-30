@@ -9,6 +9,7 @@ __pycache__/
 data/*.sqlite3
 data/*.sqlite3-journal
 data/*.db
+data/*.jsonl
 data/*auth*.txt
 logs/*.log
 secrets/*.json

@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 
 from mail_agent.config import TelegramConfig
+from mail_agent import db
 
 
 def build_summary(conn: sqlite3.Connection, *, limit: int = 10) -> str:
@@ -31,7 +32,21 @@ def build_summary(conn: sqlite3.Connection, *, limit: int = 10) -> str:
     if not rows:
         return "Mail agent: no messages selected for notification yet."
 
+    return format_summary(rows)
+
+
+def build_pending_summary(
+    conn: sqlite3.Connection, *, chat_id: str, limit: int = 10
+) -> tuple[str | None, list[sqlite3.Row]]:
+    rows = db.fetch_pending_telegram_notifications(conn, chat_id=chat_id, limit=limit)
+    if not rows:
+        return None, []
+    return format_summary(rows, title="Mail agent new important mail"), rows
+
+
+def format_summary(rows: list[sqlite3.Row], *, title: str = "Mail agent summary") -> str:
     lines = ["Mail agent summary", "Mode: read-only", ""]
+    lines[0] = title
     for index, row in enumerate(rows, start=1):
         lines.extend(
             [
@@ -69,6 +84,39 @@ def send_summary(config: TelegramConfig, conn: sqlite3.Connection, *, limit: int
     asyncio.run(_send())
 
 
+def send_pending_summary(
+    config: TelegramConfig, conn: sqlite3.Connection, *, limit: int = 10
+) -> int:
+    validate_telegram_config(config)
+    text, rows = build_pending_summary(
+        conn,
+        chat_id=config.allowed_chat_id,
+        limit=limit,
+    )
+    if text is None:
+        return 0
+
+    send_text(config, text)
+    db.mark_telegram_notifications_sent(conn, rows=rows, chat_id=config.allowed_chat_id)
+    return len(rows)
+
+
+def send_text(config: TelegramConfig, text: str) -> None:
+    validate_telegram_config(config)
+
+    async def _send() -> None:
+        from telegram import Bot
+
+        bot = Bot(config.bot_token)
+        await bot.send_message(
+            chat_id=config.allowed_chat_id,
+            text=text,
+            disable_web_page_preview=True,
+        )
+
+    asyncio.run(_send())
+
+
 def print_chat_ids(config: TelegramConfig) -> None:
     if not config.bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Fill .env first.")
@@ -90,6 +138,16 @@ def print_chat_ids(config: TelegramConfig) -> None:
             print(f"chat_id={chat.id} type={chat.type} title={chat.title or ''}")
 
     asyncio.run(_print())
+
+
+def validate_telegram_config(config: TelegramConfig) -> None:
+    if not config.bot_token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Fill .env first.")
+    if not config.allowed_chat_id:
+        raise RuntimeError(
+            "TELEGRAM_ALLOWED_CHAT_ID is empty. Send /start to the bot, then run "
+            "`mail-agent telegram-chat-id`."
+        )
 
 
 def run_bot(config: TelegramConfig, conn: sqlite3.Connection) -> None:
