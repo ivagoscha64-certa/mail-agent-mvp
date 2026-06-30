@@ -161,3 +161,115 @@ def test_runs_command_json_handles_missing_db(monkeypatch, capsys, tmp_path):
         "last_successful_notify_run": None,
         "runs": [],
     }
+
+
+def test_health_command_json_handles_missing_db_without_creating_it(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "missing.sqlite3"
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["mail-agent", "health", "--json", "--skip-scheduler"],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert db_path.exists() is False
+    assert payload["db"] == {
+        "audit_events": None,
+        "exists": False,
+        "messages": None,
+        "path": str(db_path),
+    }
+    assert payload["latest_notify_run"] is None
+    assert payload["last_successful_notify_run"] is None
+    assert payload["runs"] == []
+    assert payload["scheduler"] is None
+
+
+def test_health_command_json_includes_local_counts_runs_and_scheduler(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+
+    with db.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO messages(
+                provider, account, message_uid, message_id, sender,
+                recipients_json, subject, headers_json, attachments_json,
+                links_json, text, html, created_at
+            )
+            VALUES (
+                'gmail', 'iva196464@gmail.com', 'uid-1', 'message-1',
+                'sender@example.com', '[]', 'Hello', '{}', '[]', '[]',
+                '', '', '2026-06-30T00:00:00+00:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO audit_log(action, status, reason, metadata_json, created_at)
+            VALUES (
+                'test_event', 'completed', 'health test', '{}',
+                '2026-06-30T00:00:00+00:00'
+            )
+            """
+        )
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:00:00+00:00",
+            finished_at="2026-06-30T00:00:03+00:00",
+            limit_value=25,
+            new_count=2,
+            existing_count=3,
+            notified_count=1,
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "mail_agent.__main__._fetch_scheduler_status",
+        lambda task_name: {
+            "available": True,
+            "last_result": None,
+            "last_run": None,
+            "next_run": None,
+            "registered": False,
+            "state": None,
+            "task_name": task_name,
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["mail-agent", "health", "--limit", "1", "--json"],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["db"]["exists"] is True
+    assert payload["db"]["messages"] == 1
+    assert payload["db"]["audit_events"] == 1
+    assert payload["latest_notify_run"]["status"] == "completed"
+    assert payload["last_successful_notify_run"]["notified_count"] == 1
+    assert len(payload["runs"]) == 1
+    assert payload["scheduler"] == {
+        "available": True,
+        "last_result": None,
+        "last_run": None,
+        "next_run": None,
+        "registered": False,
+        "state": None,
+        "task_name": "MailAgentNotifyNew",
+    }

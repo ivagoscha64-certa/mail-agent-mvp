@@ -172,6 +172,59 @@ For local monitors or scripts, the same command can print JSON:
 mail-agent runs --limit 10 --json
 ```
 
+To inspect local operational health in one read-only command:
+
+```powershell
+mail-agent health
+```
+
+`health` reads local SQLite counts, recent `notify-new` runs, and Windows Task
+Scheduler status. It does not call Gmail or Telegram, and it does not create or
+update the scheduled task.
+
+For local monitors or scripts:
+
+```powershell
+mail-agent health --limit 5 --json
+```
+
+To skip the Task Scheduler query and read only SQLite/config state:
+
+```powershell
+mail-agent health --skip-scheduler
+```
+
+## Operations Checklist
+
+Before enabling unattended polling:
+
+1. Confirm the agent is still in read-only mode:
+
+```powershell
+mail-agent health --skip-scheduler
+```
+
+2. Inspect recent local run history:
+
+```powershell
+mail-agent runs --limit 10
+```
+
+3. Preview the scheduled task without creating it:
+
+```powershell
+.\scripts\Register-NotifyNewTask.ps1
+```
+
+4. Inspect whether the task is already registered:
+
+```powershell
+.\scripts\Register-NotifyNewTask.ps1 -Status
+```
+
+Only run `.\scripts\Register-NotifyNewTask.ps1 -Register` when you explicitly
+want to create or update the Windows scheduled task.
+
 ## Gmail API Access
 
 For `iva196464@gmail.com`, the preferred path is Gmail API over HTTPS.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,7 +11,7 @@ from pathlib import Path
 from mail_agent import db
 from mail_agent.audit import log_event
 from mail_agent.classifier import classify
-from mail_agent.config import load_settings
+from mail_agent.config import DEFAULT_PROJECT_DIR, load_settings
 from mail_agent.mail.gmail_api import GmailApiClient
 from mail_agent.mail.imap_client import ImapClient
 from mail_agent.safety import SafetyPolicy
@@ -33,6 +35,15 @@ def main() -> None:
     )
     subparsers.add_parser("init-db")
     subparsers.add_parser("status")
+    health = subparsers.add_parser("health")
+    health.add_argument("--limit", type=int, default=5)
+    health.add_argument("--json", action="store_true")
+    health.add_argument("--task-name", default="MailAgentNotifyNew")
+    health.add_argument(
+        "--skip-scheduler",
+        action="store_true",
+        help="Do not query Windows Task Scheduler status.",
+    )
     runs = subparsers.add_parser("runs")
     runs.add_argument("--limit", type=int, default=10)
     runs.add_argument(
@@ -136,6 +147,21 @@ def main() -> None:
                     "Last successful notify-new run: "
                     f"{latest_successful_notify_run['finished_at']}"
                 )
+        return
+
+    if args.command == "health":
+        if args.limit < 1:
+            raise SystemExit("ERROR: --limit must be at least 1")
+        payload = _build_health_payload(
+            settings,
+            run_limit=args.limit,
+            include_scheduler=not args.skip_scheduler,
+            scheduler_task_name=args.task_name,
+        )
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            return
+        _print_health_payload(payload)
         return
 
     db.init_db(settings.db_path)
@@ -376,6 +402,157 @@ def _run_log_row_to_dict(row) -> dict:
         "started_at": row["started_at"],
         "status": row["status"],
     }
+
+
+def _build_health_payload(
+    settings,
+    *,
+    run_limit: int,
+    include_scheduler: bool,
+    scheduler_task_name: str,
+) -> dict:
+    payload = {
+        "account": _active_account_email(settings),
+        "backend": settings.mail_backend,
+        "db": {
+            "audit_events": None,
+            "exists": settings.db_path.exists(),
+            "messages": None,
+            "path": str(settings.db_path),
+        },
+        "last_successful_notify_run": None,
+        "latest_notify_run": None,
+        "mode": settings.mode.value,
+        "provider": _active_provider(settings),
+        "runs": [],
+        "scheduler": None,
+    }
+
+    if settings.db_path.exists():
+        with db.connect(settings.db_path) as conn:
+            payload["db"]["messages"] = conn.execute(
+                "SELECT COUNT(*) FROM messages"
+            ).fetchone()[0]
+            payload["db"]["audit_events"] = conn.execute(
+                "SELECT COUNT(*) FROM audit_log"
+            ).fetchone()[0]
+            latest_notify_run = db.fetch_latest_run_log(conn, command="notify-new")
+            latest_successful_notify_run = db.fetch_latest_successful_run_log(
+                conn,
+                command="notify-new",
+            )
+            payload["latest_notify_run"] = (
+                _run_log_row_to_dict(latest_notify_run) if latest_notify_run else None
+            )
+            payload["last_successful_notify_run"] = (
+                _run_log_row_to_dict(latest_successful_notify_run)
+                if latest_successful_notify_run
+                else None
+            )
+            payload["runs"] = [
+                _run_log_row_to_dict(row)
+                for row in db.fetch_run_logs(
+                    conn,
+                    command="notify-new",
+                    limit=run_limit,
+                )
+            ]
+
+    if include_scheduler:
+        payload["scheduler"] = _fetch_scheduler_status(scheduler_task_name)
+
+    return payload
+
+
+def _fetch_scheduler_status(task_name: str) -> dict:
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        return {
+            "available": False,
+            "error": "PowerShell is not available.",
+            "task_name": task_name,
+        }
+
+    script_path = DEFAULT_PROJECT_DIR / "scripts" / "Register-NotifyNewTask.ps1"
+    if not script_path.exists():
+        return {
+            "available": False,
+            "error": f"Scheduler helper script not found: {script_path}",
+            "task_name": task_name,
+        }
+
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-TaskName",
+            task_name,
+            "-Status",
+            "-Json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return {
+            "available": False,
+            "error": (result.stderr or result.stdout).strip(),
+            "task_name": task_name,
+        }
+
+    payload = json.loads(result.stdout)
+    payload["available"] = True
+    return payload
+
+
+def _print_health_payload(payload: dict) -> None:
+    print(f"Mode: {payload['mode']}")
+    print(f"DB: {payload['db']['path']}")
+    print(f"Backend: {payload['backend']}")
+    print(f"Provider: {payload['provider']}")
+    print(f"Account: {payload['account']}")
+    if not payload["db"]["exists"]:
+        print("DB exists: no")
+    else:
+        print("DB exists: yes")
+        print(f"Messages: {payload['db']['messages']}")
+        print(f"Audit events: {payload['db']['audit_events']}")
+
+    latest_notify_run = payload["latest_notify_run"]
+    if latest_notify_run:
+        print(
+            "Last notify-new run: "
+            f"{latest_notify_run['status']} at "
+            f"{latest_notify_run['finished_at']} "
+            f"(new={latest_notify_run['new_count']}, "
+            f"existing={latest_notify_run['existing_count']}, "
+            f"notified={latest_notify_run['notified_count']})"
+        )
+    else:
+        print("Last notify-new run: none")
+
+    last_success = payload["last_successful_notify_run"]
+    if last_success:
+        print(f"Last successful notify-new run: {last_success['finished_at']}")
+    else:
+        print("Last successful notify-new run: none")
+
+    scheduler = payload["scheduler"]
+    if scheduler is None:
+        print("Scheduler: skipped")
+    elif not scheduler.get("available"):
+        print(f"Scheduler: unavailable ({scheduler.get('error')})")
+    elif scheduler["registered"]:
+        print(
+            "Scheduler: registered "
+            f"state={scheduler['state']} next_run={scheduler['next_run']}"
+        )
+    else:
+        print(f"Scheduler: task '{scheduler['task_name']}' is not registered")
 
 
 def _write_notify_run_log(db_path: Path, payload: dict) -> None:
