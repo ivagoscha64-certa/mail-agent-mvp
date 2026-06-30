@@ -35,6 +35,11 @@ def main() -> None:
     subparsers.add_parser("status")
     runs = subparsers.add_parser("runs")
     runs.add_argument("--limit", type=int, default=10)
+    runs.add_argument(
+        "--json",
+        action="store_true",
+        help="Print recent notify-new runs as JSON for local monitoring.",
+    )
     check_mail = subparsers.add_parser("check-mail")
     check_mail.add_argument("--limit", type=int, default=10)
     send_telegram = subparsers.add_parser("send-summary")
@@ -81,6 +86,19 @@ def main() -> None:
         if args.limit < 1:
             raise SystemExit("ERROR: --limit must be at least 1")
         if not settings.db_path.exists():
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "db": str(settings.db_path),
+                            "last_successful_notify_run": None,
+                            "runs": [],
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+                return
             print(f"No DB found: {settings.db_path}")
             return
         with db.connect(settings.db_path) as conn:
@@ -89,6 +107,23 @@ def main() -> None:
                 conn,
                 command="notify-new",
             )
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "db": str(settings.db_path),
+                            "last_successful_notify_run": (
+                                _run_log_row_to_dict(latest_successful_notify_run)
+                                if latest_successful_notify_run
+                                else None
+                            ),
+                            "runs": [_run_log_row_to_dict(row) for row in run_rows],
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+                return
             print(f"DB: {settings.db_path}")
             if not run_rows:
                 print("No notify-new runs recorded.")
@@ -322,6 +357,25 @@ def _format_run_log_row(row) -> str:
         ]
         line += " | error=" + ": ".join(part for part in error_parts if part)
     return line
+
+
+def _run_log_row_to_dict(row) -> dict:
+    return {
+        "account": row["account"],
+        "command": row["command"],
+        "error": row["error"],
+        "error_phase": row["error_phase"],
+        "error_type": row["error_type"],
+        "existing_count": row["existing_count"],
+        "finished_at": row["finished_at"],
+        "id": row["id"],
+        "limit": row["limit_value"],
+        "new_count": row["new_count"],
+        "notified_count": row["notified_count"],
+        "provider": row["provider"],
+        "started_at": row["started_at"],
+        "status": row["status"],
+    }
 
 
 def _write_notify_run_log(db_path: Path, payload: dict) -> None:

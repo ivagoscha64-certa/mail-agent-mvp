@@ -129,6 +129,12 @@ To inspect or disable the schedule:
 .\scripts\Register-NotifyNewTask.ps1 -Unregister
 ```
 
+For local monitors or scripts, task status can also be printed as JSON:
+
+```powershell
+.\scripts\Register-NotifyNewTask.ps1 -Status -Json
+```
+
 The scheduled task only runs `notify-new`. It does not add email sending,
 deletion, moving, spam, or unsubscribe actions.
 
@@ -158,6 +164,12 @@ To inspect recent `notify-new` run history from local SQLite only:
 
 ```powershell
 mail-agent runs --limit 10
+```
+
+For local monitors or scripts, the same command can print JSON:
+
+```powershell
+mail-agent runs --limit 10 --json
 ```
 
 ## Gmail API Access

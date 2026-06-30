@@ -4,7 +4,8 @@ param(
     [int]$Limit = 25,
     [switch]$Register,
     [switch]$Unregister,
-    [switch]$Status
+    [switch]$Status,
+    [switch]$Json
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,11 +95,35 @@ Assert-ReadOnlyMode -EnvPath $envPath
 if ($Status) {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if (-not $task) {
+        if ($Json) {
+            [ordered]@{
+                task_name = $TaskName
+                registered = $false
+                state = $null
+                last_run = $null
+                last_result = $null
+                next_run = $null
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+
         Write-Host "Scheduled task '$TaskName' is not registered."
         exit 0
     }
 
     $info = Get-ScheduledTaskInfo -TaskName $TaskName
+    if ($Json) {
+        [ordered]@{
+            task_name = $TaskName
+            registered = $true
+            state = [string]$task.State
+            last_run = $info.LastRunTime
+            last_result = $info.LastTaskResult
+            next_run = $info.NextRunTime
+        } | ConvertTo-Json -Compress
+        exit 0
+    }
+
     Write-Host "Scheduled task '$TaskName' is registered."
     Write-Host "  State:        $($task.State)"
     Write-Host "  Last run:     $($info.LastRunTime)"
