@@ -1,7 +1,7 @@
 [project]
 name = "mail-agent-mvp"
 version = "0.1.0"
-description = "Read-only MVP scaffold for a Mail.ru IMAP + SQLite + Telegram mail agent."
+description = "Read-only MVP scaffold for an IMAP + SQLite + Telegram mail agent."
 requires-python = ">=3.11"
 dependencies = [
   "python-dotenv>=1.0.1",

@@ -1,28 +1,32 @@
 # Mail Agent MVP
 
-Каркас почтового агента по шагу 3: Python, SQLite, Telegram bot, Mail.ru IMAP.
+Read-only MVP for a personal mail agent: Python, SQLite, Telegram bot, and IMAP.
 
-Стартовый режим строго read-only:
+Current first test account:
 
-- без удаления писем;
-- без отправки писем;
-- без отписок;
-- без переноса в спам;
-- без перемещения писем.
+```text
+iva196464@gmail.com
+```
 
-Первый ящик: `nadegda6464@mail.ru`.
+The starter mode is strictly read-only:
 
-## Структура
+- no email sending;
+- no email deletion;
+- no unsubscribe actions;
+- no moving messages to spam;
+- no moving messages between folders.
 
-- `src/mail_agent/config.py` - конфигурация из переменных окружения.
-- `src/mail_agent/safety.py` - центральная политика безопасности.
-- `src/mail_agent/mail/imap_mailru.py` - read-only IMAP-коннектор Mail.ru.
-- `src/mail_agent/db.py` и `src/mail_agent/schema.sql` - SQLite-хранилище.
-- `src/mail_agent/telegram_bot.py` - базовые команды Telegram.
-- `src/mail_agent/classifier.py` - первые rule-based классификации.
-- `src/mail_agent/audit.py` - журнал действий.
+## Structure
 
-## Быстрый старт
+- `src/mail_agent/config.py` - environment-based configuration.
+- `src/mail_agent/safety.py` - central read-only safety policy.
+- `src/mail_agent/mail/imap_client.py` - read-only IMAP connector.
+- `src/mail_agent/db.py` and `src/mail_agent/schema.sql` - SQLite storage.
+- `src/mail_agent/telegram_bot.py` - basic Telegram commands.
+- `src/mail_agent/classifier.py` - first rule-based classifications.
+- `src/mail_agent/audit.py` - action audit log.
+
+## Quick Start
 
 ```powershell
 cd E:\AI\mail-agent-mvp
@@ -34,27 +38,39 @@ mail-agent init-db
 mail-agent status
 ```
 
-Для проверки IMAP заполните `MAILRU_IMAP_PASSWORD` в `.env` app-паролем Mail.ru и выполните:
+For Gmail IMAP, fill `IMAP_PASSWORD` in `.env` with a Google app password, then run:
 
 ```powershell
 mail-agent check-mail --limit 10
 ```
 
-Telegram bot стартует только при заполненном `TELEGRAM_BOT_TOKEN`:
+Telegram bot starts only when `TELEGRAM_BOT_TOKEN` is filled:
 
 ```powershell
 mail-agent bot
 ```
 
-## Безопасность
+## Gmail Access
 
-Все потенциально опасные операции проходят через `SafetyPolicy.assert_allowed`.
-В режиме `read_only` разрешены только:
+For `iva196464@gmail.com`, use a Google app password, not the normal account password.
 
-- чтение писем через IMAP;
-- сохранение данных и рекомендаций в SQLite;
-- отправка Telegram-уведомлений;
-- создание локальных черновиков в базе как текстовых записей.
+Typical path in Google Account:
 
-Черновики пока не пишутся в Mail.ru: это сознательно оставлено за пределами стартового read-only режима.
+```text
+Google Account -> Security -> 2-Step Verification -> App passwords
+```
 
+If app passwords are unavailable, enable 2-Step Verification first. Some Google accounts may not show app passwords if the account is managed by an organization or has a security policy that blocks them.
+
+## Safety
+
+All potentially dangerous operations go through `SafetyPolicy.assert_allowed`.
+
+In `read_only` mode only these capabilities are allowed:
+
+- read messages through IMAP;
+- store message data and recommendations in SQLite;
+- send Telegram notifications;
+- create local draft records in the database.
+
+Drafts are not written back to Gmail yet. That is intentionally outside the first read-only test.

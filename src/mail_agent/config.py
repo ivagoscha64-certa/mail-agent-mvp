@@ -13,7 +13,8 @@ DEFAULT_PROJECT_DIR = Path(r"E:\AI\mail-agent-mvp")
 
 
 @dataclass(frozen=True)
-class MailruConfig:
+class ImapAccountConfig:
+    provider: str
     account_email: str
     imap_host: str
     imap_port: int
@@ -31,7 +32,7 @@ class TelegramConfig:
 class Settings:
     mode: AgentMode
     db_path: Path
-    mailru: MailruConfig
+    imap_account: ImapAccountConfig
     telegram: TelegramConfig
 
 
@@ -51,20 +52,20 @@ def load_settings(env_file: Path | None = None) -> Settings:
         )
     )
 
-    account_email = os.getenv("MAILRU_ACCOUNT_EMAIL", "nadegda6464@mail.ru")
+    account_email = os.getenv("IMAP_ACCOUNT_EMAIL", "iva196464@gmail.com")
     return Settings(
         mode=mode,
         db_path=db_path,
-        mailru=MailruConfig(
+        imap_account=ImapAccountConfig(
+            provider=os.getenv("IMAP_PROVIDER", "gmail"),
             account_email=account_email,
-            imap_host=os.getenv("MAILRU_IMAP_HOST", "imap.mail.ru"),
-            imap_port=int(os.getenv("MAILRU_IMAP_PORT", "993")),
-            imap_username=os.getenv("MAILRU_IMAP_USERNAME", account_email),
-            imap_password=os.getenv("MAILRU_IMAP_PASSWORD", ""),
+            imap_host=os.getenv("IMAP_HOST", "imap.gmail.com"),
+            imap_port=int(os.getenv("IMAP_PORT", "993")),
+            imap_username=os.getenv("IMAP_USERNAME", account_email),
+            imap_password=os.getenv("IMAP_PASSWORD", ""),
         ),
         telegram=TelegramConfig(
             bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             allowed_chat_id=os.getenv("TELEGRAM_ALLOWED_CHAT_ID", ""),
         ),
     )
-

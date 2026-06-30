@@ -40,8 +40,9 @@ def _payload_text(message: Message, content_type: str) -> str:
     return payload.decode(charset, errors="replace")
 
 
-def normalize_mailru_message(
+def normalize_imap_message(
     *,
+    provider: Provider,
     account: str,
     uid: str,
     folder: str,
@@ -60,7 +61,7 @@ def normalize_mailru_message(
     headers = {key: value for key, value in message.items()}
 
     return NormalizedMessage(
-        provider=Provider.MAILRU,
+        provider=provider,
         account=account,
         message_uid=uid,
         message_id=message.get("Message-ID"),
@@ -83,4 +84,3 @@ def normalize_mailru_message(
         links=link_extractor.links,
         folder=folder,
     )
-

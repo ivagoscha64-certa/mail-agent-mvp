@@ -6,8 +6,7 @@ from mail_agent import db
 from mail_agent.audit import log_event
 from mail_agent.classifier import classify
 from mail_agent.config import load_settings
-from mail_agent.mail.imap_mailru import MailruImapClient
-from mail_agent.models import Provider
+from mail_agent.mail.imap_client import ImapClient
 from mail_agent.safety import SafetyPolicy
 from mail_agent.telegram_bot import run_bot
 
@@ -29,16 +28,16 @@ def main() -> None:
         with db.connect(settings.db_path) as conn:
             db.upsert_account(
                 conn,
-                Provider.MAILRU.value,
-                settings.mailru.account_email,
+                settings.imap_account.provider,
+                settings.imap_account.account_email,
                 settings.mode.value,
             )
             log_event(
                 conn,
                 action="init_db",
                 status="completed",
-                reason="Initialized SQLite schema and first Mail.ru account.",
-                account=settings.mailru.account_email,
+                reason="Initialized SQLite schema and first IMAP account.",
+                account=settings.imap_account.account_email,
             )
         print(f"Initialized DB: {settings.db_path}")
         return
@@ -47,8 +46,8 @@ def main() -> None:
     with db.connect(settings.db_path) as conn:
         db.upsert_account(
             conn,
-            Provider.MAILRU.value,
-            settings.mailru.account_email,
+            settings.imap_account.provider,
+            settings.imap_account.account_email,
             settings.mode.value,
         )
 
@@ -57,16 +56,17 @@ def main() -> None:
             audit_count = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
             print(f"Mode: {settings.mode.value}")
             print(f"DB: {settings.db_path}")
-            print(f"Account: {settings.mailru.account_email}")
+            print(f"Provider: {settings.imap_account.provider}")
+            print(f"Account: {settings.imap_account.account_email}")
             print(f"Messages: {message_count}")
             print(f"Audit events: {audit_count}")
             return
 
         if args.command == "check-mail":
-            if not settings.mailru.imap_password:
-                raise RuntimeError("MAILRU_IMAP_PASSWORD is empty. Fill .env first.")
+            if not settings.imap_account.imap_password:
+                raise RuntimeError("IMAP_PASSWORD is empty. Fill .env first.")
             safety = SafetyPolicy(settings.mode)
-            client = MailruImapClient(settings.mailru, safety)
+            client = ImapClient(settings.imap_account, safety)
             saved = 0
             for message in client.iter_recent_messages(limit=args.limit):
                 row_id = db.save_message(conn, message)

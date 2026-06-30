@@ -11,7 +11,9 @@ class AgentMode(StrEnum):
 
 
 class Provider(StrEnum):
+    GMAIL = "gmail"
     MAILRU = "mailru"
+    YANDEX = "yandex"
 
 
 class Importance(StrEnum):
@@ -85,4 +87,3 @@ class Classification:
     risk: Risk
     message_type: MessageType
     reason: str
-
