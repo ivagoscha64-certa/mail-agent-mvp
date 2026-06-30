@@ -18,3 +18,4 @@ def test_default_imap_account_is_gmail(monkeypatch, tmp_path):
     assert settings.imap_account.account_email == "iva196464@gmail.com"
     assert settings.imap_account.imap_host == "imap.gmail.com"
     assert settings.imap_account.imap_port == 993
+    assert settings.imap_account.imap_timeout_seconds == 15

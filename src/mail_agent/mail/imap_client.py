@@ -22,7 +22,21 @@ class ImapClient:
             return
 
         provider = Provider(self.config.provider)
-        with imaplib.IMAP4_SSL(self.config.imap_host, self.config.imap_port) as imap:
+        try:
+            imap = imaplib.IMAP4_SSL(
+                self.config.imap_host,
+                self.config.imap_port,
+                timeout=self.config.imap_timeout_seconds,
+            )
+        except OSError as exc:
+            raise RuntimeError(
+                "Could not connect to IMAP server "
+                f"{self.config.imap_host}:{self.config.imap_port}. "
+                "Check whether port 993 is blocked by the network, VPN, firewall, "
+                "or antivirus."
+            ) from exc
+
+        with imap:
             imap.login(self.config.imap_username, self.config.imap_password)
             imap.select(folder, readonly=True)
             status, data = imap.uid("search", None, "ALL")

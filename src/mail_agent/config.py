@@ -18,6 +18,7 @@ class ImapAccountConfig:
     account_email: str
     imap_host: str
     imap_port: int
+    imap_timeout_seconds: int
     imap_username: str
     imap_password: str
 
@@ -61,6 +62,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
             account_email=account_email,
             imap_host=os.getenv("IMAP_HOST", "imap.gmail.com"),
             imap_port=int(os.getenv("IMAP_PORT", "993")),
+            imap_timeout_seconds=int(os.getenv("IMAP_TIMEOUT_SECONDS", "15")),
             imap_username=os.getenv("IMAP_USERNAME", account_email),
             imap_password=os.getenv("IMAP_PASSWORD", ""),
         ),
