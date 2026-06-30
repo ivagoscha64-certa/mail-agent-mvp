@@ -9,7 +9,7 @@ from mail_agent.config import load_settings
 from mail_agent.mail.gmail_api import GmailApiClient
 from mail_agent.mail.imap_client import ImapClient
 from mail_agent.safety import SafetyPolicy
-from mail_agent.telegram_bot import run_bot
+from mail_agent.telegram_bot import print_chat_ids, run_bot, send_summary
 
 
 def main() -> None:
@@ -25,6 +25,9 @@ def main() -> None:
     subparsers.add_parser("status")
     check_mail = subparsers.add_parser("check-mail")
     check_mail.add_argument("--limit", type=int, default=10)
+    send_telegram = subparsers.add_parser("send-summary")
+    send_telegram.add_argument("--limit", type=int, default=10)
+    subparsers.add_parser("telegram-chat-id")
     subparsers.add_parser("bot")
 
     args = parser.parse_args()
@@ -111,6 +114,21 @@ def main() -> None:
 
         if args.command == "bot":
             run_bot(settings.telegram, conn)
+            return
+
+        if args.command == "telegram-chat-id":
+            try:
+                print_chat_ids(settings.telegram)
+            except RuntimeError as exc:
+                raise SystemExit(f"ERROR: {exc}") from None
+            return
+
+        if args.command == "send-summary":
+            try:
+                send_summary(settings.telegram, conn, limit=args.limit)
+            except RuntimeError as exc:
+                raise SystemExit(f"ERROR: {exc}") from None
+            print("Telegram summary sent.")
             return
 
 def _active_provider(settings) -> str:

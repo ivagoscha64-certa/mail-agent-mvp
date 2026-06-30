@@ -63,6 +63,25 @@ Telegram bot starts only when `TELEGRAM_BOT_TOKEN` is filled:
 mail-agent bot
 ```
 
+To send a one-time summary:
+
+```powershell
+mail-agent send-summary --limit 10
+```
+
+If `TELEGRAM_ALLOWED_CHAT_ID` is not known yet:
+
+1. Create a bot with Telegram `@BotFather`.
+2. Put the token into `.env` as `TELEGRAM_BOT_TOKEN`.
+3. Send `/start` to the bot in Telegram.
+4. Run:
+
+```powershell
+mail-agent telegram-chat-id
+```
+
+5. Put the printed `chat_id` into `.env` as `TELEGRAM_ALLOWED_CHAT_ID`.
+
 ## Gmail API Access
 
 For `iva196464@gmail.com`, the preferred path is Gmail API over HTTPS.
