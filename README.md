@@ -2,10 +2,10 @@
 
 Read-only MVP for a personal mail agent: Python, SQLite, Telegram bot, Gmail API, and IMAP fallback.
 
-Current first test account:
+Configure the local Gmail account in `.env`:
 
 ```text
-iva196464@gmail.com
+GMAIL_ACCOUNT_EMAIL=your.email@example.com
 ```
 
 The starter mode is strictly read-only:
@@ -30,7 +30,7 @@ The starter mode is strictly read-only:
 ## Quick Start
 
 ```powershell
-cd E:\AI\mail-agent-mvp
+cd <repo path>
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
@@ -39,10 +39,15 @@ mail-agent init-db
 mail-agent status
 ```
 
-For Gmail API, put the OAuth client JSON here:
+By default, project paths are derived from the repository root. You can override
+that base folder with `MAIL_AGENT_PROJECT_DIR`, or override individual paths
+such as `MAIL_AGENT_DB_PATH`, `GMAIL_CREDENTIALS_PATH`, and `GMAIL_TOKEN_PATH`
+in `.env`.
+
+For Gmail API, put the OAuth client JSON here by default:
 
 ```text
-E:\AI\mail-agent-mvp\secrets\gmail-credentials.json
+secrets\gmail-credentials.json
 ```
 
 Then authorize once:
@@ -99,7 +104,7 @@ The project includes a safe helper script for scheduling the existing read-only
 notification command:
 
 ```powershell
-cd E:\AI\mail-agent-mvp
+cd <repo path>
 .\scripts\Register-NotifyNewTask.ps1
 ```
 
@@ -143,7 +148,7 @@ deletion, moving, spam, or unsubscribe actions.
 Every `notify-new` run appends a JSONL result record here:
 
 ```text
-E:\AI\mail-agent-mvp\data\notify-new-runs.jsonl
+data\notify-new-runs.jsonl
 ```
 
 The same run result is also stored in SQLite table `run_log`, including:
@@ -585,7 +590,7 @@ want to create or update the Windows scheduled task.
 
 ## Gmail API Access
 
-For `iva196464@gmail.com`, the preferred path is Gmail API over HTTPS.
+For Gmail accounts, the preferred path is Gmail API over HTTPS.
 
 Required local files:
 

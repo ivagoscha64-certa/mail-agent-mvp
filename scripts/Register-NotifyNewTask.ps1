@@ -204,7 +204,7 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Runs mail-agent notify-new in read-only mode for iva196464@gmail.com." `
+    -Description "Runs mail-agent notify-new in read-only mode for the configured Gmail account." `
     -Force | Out-Null
 
 Write-Host "Created or updated scheduled task '$TaskName'."

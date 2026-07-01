@@ -9,8 +9,9 @@ from dotenv import load_dotenv
 from mail_agent.models import AgentMode
 
 
-DEFAULT_PROJECT_DIR = Path(r"E:\AI\mail-agent-mvp")
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[2]
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+DEFAULT_ACCOUNT_EMAIL = "your.email@example.com"
 
 
 @dataclass(frozen=True)
@@ -50,9 +51,11 @@ class Settings:
 
 
 def load_settings(env_file: Path | None = None) -> Settings:
-    env_path = env_file or DEFAULT_PROJECT_DIR / ".env"
+    project_dir = get_project_dir()
+    env_path = env_file or project_dir / ".env"
     if env_path.exists():
         load_dotenv(env_path)
+        project_dir = get_project_dir()
 
     mode = AgentMode(os.getenv("MAIL_AGENT_MODE", AgentMode.READ_ONLY.value))
     if mode != AgentMode.READ_ONLY:
@@ -61,11 +64,11 @@ def load_settings(env_file: Path | None = None) -> Settings:
     db_path = Path(
         os.getenv(
             "MAIL_AGENT_DB_PATH",
-            str(DEFAULT_PROJECT_DIR / "data" / "mail-agent.sqlite3"),
+            str(project_dir / "data" / "mail-agent.sqlite3"),
         )
     )
 
-    gmail_account_email = os.getenv("GMAIL_ACCOUNT_EMAIL", "iva196464@gmail.com")
+    gmail_account_email = os.getenv("GMAIL_ACCOUNT_EMAIL", DEFAULT_ACCOUNT_EMAIL)
     imap_account_email = os.getenv("IMAP_ACCOUNT_EMAIL", gmail_account_email)
     return Settings(
         mode=mode,
@@ -77,13 +80,13 @@ def load_settings(env_file: Path | None = None) -> Settings:
             credentials_path=Path(
                 os.getenv(
                     "GMAIL_CREDENTIALS_PATH",
-                    str(DEFAULT_PROJECT_DIR / "secrets" / "gmail-credentials.json"),
+                    str(project_dir / "secrets" / "gmail-credentials.json"),
                 )
             ),
             token_path=Path(
                 os.getenv(
                     "GMAIL_TOKEN_PATH",
-                    str(DEFAULT_PROJECT_DIR / "secrets" / "gmail-token.json"),
+                    str(project_dir / "secrets" / "gmail-token.json"),
                 )
             ),
             scopes=(GMAIL_READONLY_SCOPE,),
@@ -102,3 +105,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
             allowed_chat_id=os.getenv("TELEGRAM_ALLOWED_CHAT_ID", ""),
         ),
     )
+
+
+def get_project_dir() -> Path:
+    return Path(os.getenv("MAIL_AGENT_PROJECT_DIR", str(DEFAULT_PROJECT_DIR)))

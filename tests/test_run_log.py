@@ -771,7 +771,7 @@ def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
 def test_scheduler_status_handles_json_parse_error(monkeypatch, tmp_path):
     _write_scheduler_script(tmp_path)
     monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
-    monkeypatch.setattr("mail_agent.__main__.DEFAULT_PROJECT_DIR", tmp_path)
+    monkeypatch.setenv("MAIL_AGENT_PROJECT_DIR", str(tmp_path))
     monkeypatch.setattr(
         "mail_agent.__main__.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
@@ -788,10 +788,38 @@ def test_scheduler_status_handles_json_parse_error(monkeypatch, tmp_path):
     assert payload["error_type"] == "JSONDecodeError"
 
 
+def test_scheduler_status_finds_helper_script_from_repo_root(monkeypatch):
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps({"task_name": "Task", "registered": False}),
+            stderr="",
+        )
+
+    monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
+    monkeypatch.setattr("mail_agent.__main__.subprocess.run", fake_run)
+    monkeypatch.delenv("MAIL_AGENT_PROJECT_DIR", raising=False)
+
+    payload = _fetch_scheduler_status("Task")
+
+    script_path = Path(captured["args"][5])
+    assert script_path == (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "Register-NotifyNewTask.ps1"
+    )
+    assert payload["available"] is True
+    assert payload["task_name"] == "Task"
+
+
 def test_scheduler_status_handles_subprocess_failure(monkeypatch, tmp_path):
     _write_scheduler_script(tmp_path)
     monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
-    monkeypatch.setattr("mail_agent.__main__.DEFAULT_PROJECT_DIR", tmp_path)
+    monkeypatch.setenv("MAIL_AGENT_PROJECT_DIR", str(tmp_path))
     monkeypatch.setattr(
         "mail_agent.__main__.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
@@ -819,7 +847,7 @@ def test_scheduler_status_handles_timeout(monkeypatch, tmp_path):
 
     _write_scheduler_script(tmp_path)
     monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
-    monkeypatch.setattr("mail_agent.__main__.DEFAULT_PROJECT_DIR", tmp_path)
+    monkeypatch.setenv("MAIL_AGENT_PROJECT_DIR", str(tmp_path))
     monkeypatch.setattr("mail_agent.__main__.subprocess.run", raise_timeout)
 
     payload = _fetch_scheduler_status("Task")

@@ -11,7 +11,7 @@ from pathlib import Path
 from mail_agent import db
 from mail_agent.audit import log_event
 from mail_agent.classifier import classify
-from mail_agent.config import DEFAULT_PROJECT_DIR, load_settings
+from mail_agent.config import get_project_dir, load_settings
 from mail_agent.diagnostics import (
     active_account_email,
     active_provider,
@@ -404,7 +404,7 @@ def _fetch_scheduler_status(task_name: str) -> dict:
             "task_name": task_name,
         }
 
-    script_path = DEFAULT_PROJECT_DIR / "scripts" / "Register-NotifyNewTask.ps1"
+    script_path = get_project_dir() / "scripts" / "Register-NotifyNewTask.ps1"
     if not script_path.exists():
         return {
             "available": False,
