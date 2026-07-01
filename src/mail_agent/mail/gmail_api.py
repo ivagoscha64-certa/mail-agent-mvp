@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import base64
+import time
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Callable, Iterator
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from mail_agent.config import GmailApiConfig
 from mail_agent.models import Provider, UnsafeAction
@@ -38,15 +40,15 @@ class GmailApiClient:
             service.users()
             .messages()
             .list(userId="me", labelIds=["INBOX"], maxResults=limit)
-            .execute()
         )
+        result = _execute_with_retry(result)
         for item in result.get("messages", []):
             raw_result = (
                 service.users()
                 .messages()
                 .get(userId="me", id=item["id"], format="raw")
-                .execute()
             )
+            raw_result = _execute_with_retry(raw_result)
             raw_message = _decode_gmail_raw(raw_result["raw"])
             parsed = BytesParser(policy=policy.default).parsebytes(raw_message)
             if not isinstance(parsed, EmailMessage):
@@ -113,3 +115,32 @@ def _load_existing_token(token_path: Path, scopes: tuple[str, ...]) -> Credentia
 def _decode_gmail_raw(raw: str) -> bytes:
     padding = "=" * (-len(raw) % 4)
     return base64.urlsafe_b64decode(raw + padding)
+
+
+def _execute_with_retry(
+    request: Any,
+    *,
+    max_attempts: int = 3,
+    sleep: Callable[[float], None] = time.sleep,
+    backoff_seconds: tuple[float, ...] = (0.5, 1.0, 2.0),
+) -> Any:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    for attempt in range(max_attempts):
+        try:
+            return request.execute()
+        except Exception as exc:
+            if attempt == max_attempts - 1 or not _is_transient_execute_error(exc):
+                raise
+            sleep(backoff_seconds[min(attempt, len(backoff_seconds) - 1)])
+
+    raise RuntimeError("unreachable")
+
+
+def _is_transient_execute_error(exc: Exception) -> bool:
+    if isinstance(exc, HttpError):
+        status = getattr(exc.resp, "status", None)
+        return status in {429, 500, 502, 503, 504}
+
+    return isinstance(exc, OSError)
