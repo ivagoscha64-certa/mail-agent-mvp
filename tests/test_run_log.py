@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mail_agent import db
@@ -397,6 +398,7 @@ def test_operational_review_handles_missing_db_without_creating_it(
 def test_operational_review_reports_healthy_db(monkeypatch, tmp_path):
     db_path = tmp_path / "mail.sqlite3"
     db.init_db(db_path)
+    finished_at = _iso_seconds_ago(60)
     with db.connect(db_path) as conn:
         db.insert_run_log(
             conn,
@@ -404,8 +406,8 @@ def test_operational_review_reports_healthy_db(monkeypatch, tmp_path):
             status="completed",
             account="iva196464@gmail.com",
             provider="gmail",
-            started_at="2026-06-30T00:00:00+00:00",
-            finished_at="2026-06-30T00:00:03+00:00",
+            started_at=finished_at,
+            finished_at=finished_at,
             limit_value=25,
             new_count=2,
             existing_count=3,
@@ -425,10 +427,120 @@ def test_operational_review_reports_healthy_db(monkeypatch, tmp_path):
     assert payload["db"]["exists"] is True
     assert payload["db"]["readable"] is True
     assert payload["notify_new"]["latest"]["status"] == "completed"
+    assert payload["thresholds"] == {
+        "notify_new_success_warning_after_seconds": 1800,
+        "notify_new_success_critical_after_seconds": 7200,
+    }
+    assert payload["notify_new"]["last_successful_age_seconds"] < 1800
     assert [finding["code"] for finding in payload["findings"]] == [
         "db_readable",
         "latest_notify_new_completed",
+        "notify_new_success_fresh",
     ]
+
+
+def test_operational_review_warns_when_success_is_older_than_warning_threshold(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    finished_at = _iso_seconds_ago(1900)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at=finished_at,
+            finished_at=finished_at,
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    age_finding = _finding(payload, "notify_new_success_warning_age")
+    assert payload["status"] == "warning"
+    assert payload["risk"] == "medium"
+    assert payload["notify_new"]["last_successful_age_seconds"] >= 1800
+    assert age_finding["level"] == "warning"
+    assert age_finding["observed_seconds"] >= 1800
+    assert age_finding["threshold_seconds"] == 1800
+
+
+def test_operational_review_critical_when_success_is_older_than_critical_threshold(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    finished_at = _iso_seconds_ago(7300)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at=finished_at,
+            finished_at=finished_at,
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    age_finding = _finding(payload, "notify_new_success_critical_age")
+    assert payload["status"] == "critical"
+    assert payload["risk"] == "high"
+    assert payload["notify_new"]["last_successful_age_seconds"] >= 7200
+    assert age_finding["level"] == "critical"
+    assert age_finding["observed_seconds"] >= 7200
+    assert age_finding["threshold_seconds"] == 7200
+
+
+def test_operational_review_warns_when_success_timestamp_cannot_be_parsed(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="not-a-timestamp",
+            finished_at="not-a-timestamp",
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    age_finding = _finding(payload, "notify_new_success_age_unknown")
+    assert payload["status"] == "warning"
+    assert payload["risk"] == "medium"
+    assert payload["notify_new"]["last_successful_age_seconds"] is None
+    assert age_finding["level"] == "warning"
+    assert age_finding["observed_seconds"] is None
+    assert age_finding["threshold_seconds"] == 1800
 
 
 def test_operational_review_reports_latest_failed_run(monkeypatch, tmp_path):
@@ -516,6 +628,7 @@ def test_operational_review_reports_corrupt_db(monkeypatch, tmp_path):
 def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
     db_path = tmp_path / "mail.sqlite3"
     db.init_db(db_path)
+    finished_at = _iso_seconds_ago(60)
     with db.connect(db_path) as conn:
         db.insert_run_log(
             conn,
@@ -523,8 +636,8 @@ def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
             status="completed",
             account="iva196464@gmail.com",
             provider="gmail",
-            started_at="2026-06-30T00:00:00+00:00",
-            finished_at="2026-06-30T00:00:03+00:00",
+            started_at=finished_at,
+            finished_at=finished_at,
         )
 
     monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
@@ -540,6 +653,7 @@ def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
     assert payload["risk"] == "low"
     assert payload["config"]["db_path"] == str(db_path)
     assert payload["notify_new"]["latest"]["status"] == "completed"
+    assert payload["notify_new"]["last_successful_age_seconds"] < 1800
 
 
 def test_scheduler_status_handles_json_parse_error(monkeypatch, tmp_path):
@@ -606,3 +720,16 @@ def _write_scheduler_script(project_dir: Path) -> None:
     script_path = project_dir / "scripts" / "Register-NotifyNewTask.ps1"
     script_path.parent.mkdir()
     script_path.write_text("# test script", encoding="utf-8")
+
+
+def _iso_seconds_ago(seconds: int) -> str:
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat(
+        timespec="seconds"
+    )
+
+
+def _finding(payload: dict, code: str) -> dict:
+    for finding in payload["findings"]:
+        if finding["code"] == code:
+            return finding
+    raise AssertionError(f"missing finding {code}")

@@ -213,8 +213,12 @@ mail-agent review --limit 10 --sender-limit 10 --json
 
 `review` reports `status` as `ok`, `warning`, or `critical`, and `risk` as
 `low`, `medium`, or `high`. Missing DBs are `warning`/`medium`; unreadable,
-corrupt, old-schema DBs, or a latest failed `notify-new` run are
-`critical`/`high`. The command opens SQLite only in read-only mode and does not
+corrupt, or old-schema DBs are `critical`/`high`. A latest failed `notify-new`
+run is `critical`/`high`. A readable DB with no recorded `notify-new` run is
+`warning`/`medium`. The last successful `notify-new` run is considered fresh for
+30 minutes, stale at 30 minutes (`warning`/`medium`), and critical at 2 hours
+(`critical`/`high`). Unparseable successful-run timestamps are
+`warning`/`medium`. The command opens SQLite only in read-only mode and does not
 create a missing DB file or parent directory.
 
 ## Local Read-Only Web Panel
@@ -347,19 +351,28 @@ HTTP 400 with `{"error": "..."}` for invalid query parameters.
   - Query: `limit` integer, default `10`, minimum `1`; `sender_limit` integer,
     default `10`, minimum `1`.
   - Response fields: `status`, `risk`, `generated_at`, `config`, `safety`,
-    `db`, `notify_new`, `local_activity`, and `findings`.
+    `thresholds`, `db`, `notify_new`, `local_activity`, and `findings`.
+  - `thresholds` includes
+    `notify_new_success_warning_after_seconds: 1800` and
+    `notify_new_success_critical_after_seconds: 7200`.
   - `config` summarizes `mode`, `backend`, `provider`, `account`, and
     `db_path`.
   - `safety` explicitly reports that diagnostics are read-only and that Gmail,
     Telegram, and Scheduler were not called or modified.
   - `db` uses the same shape as `/api/health` DB info.
-  - `notify_new` includes `latest`, `last_successful`, and `recent_runs`.
+  - `notify_new` includes `latest`, `last_successful`,
+    `last_successful_age_seconds`, and `recent_runs`.
   - `local_activity` includes nested `message_stats` and `run_log_events`
     payloads.
-  - Status/risk mapping: healthy DB plus completed latest `notify-new` is
-    `ok`/`low`; missing DB or no recorded `notify-new` run is
-    `warning`/`medium`; unreadable/corrupt/old-schema DB or latest failed
-    `notify-new` is `critical`/`high`.
+  - Findings include `level`, `code`, and `message`. Threshold findings also
+    include `observed_seconds` and `threshold_seconds`.
+  - Status/risk mapping: healthy DB plus latest completed `notify-new` and a
+    fresh last successful `notify-new` is `ok`/`low`; missing DB, no recorded
+    `notify-new` run, last successful `notify-new` older than 30 minutes but
+    younger than 2 hours, or an unparseable last successful timestamp is
+    `warning`/`medium`; unreadable/corrupt/old-schema DB, latest failed
+    `notify-new`, or last successful `notify-new` older than 2 hours is
+    `critical`/`high`.
   - Missing DB: reported as diagnostics; no DB file or parent directory is
     created.
 

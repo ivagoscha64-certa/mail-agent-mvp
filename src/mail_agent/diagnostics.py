@@ -12,6 +12,9 @@ from mail_agent import db
 
 SchedulerFetcher = Callable[[str], dict]
 
+NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS = 1800
+NOTIFY_NEW_SUCCESS_CRITICAL_AFTER_SECONDS = 7200
+
 
 def active_provider(settings) -> str:
     if settings.mail_backend == "gmail_api":
@@ -288,6 +291,11 @@ def build_operational_review_payload(
     findings: list[dict] = []
     db_info = health["db"]
     latest_notify_run = health["latest_notify_run"]
+    last_successful_notify_run = health["last_successful_notify_run"]
+    last_successful_age_seconds = _notify_new_success_age_seconds(
+        generated_at,
+        last_successful_notify_run,
+    )
 
     if not db_info["exists"]:
         findings.append(
@@ -348,11 +356,30 @@ def build_operational_review_payload(
             )
         )
 
+    if (
+        db_info["readable"]
+        and (not latest_notify_run or latest_notify_run["status"] != "failed")
+    ):
+        findings.append(
+            _notify_new_success_age_finding(
+                last_successful_age_seconds,
+                last_successful_notify_run,
+            )
+        )
+
     status, risk = _review_status_and_risk(findings)
     return {
         "status": status,
         "risk": risk,
         "generated_at": generated_at,
+        "thresholds": {
+            "notify_new_success_warning_after_seconds": (
+                NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS
+            ),
+            "notify_new_success_critical_after_seconds": (
+                NOTIFY_NEW_SUCCESS_CRITICAL_AFTER_SECONDS
+            ),
+        },
         "config": {
             "account": active_account_email(settings),
             "backend": settings.mail_backend,
@@ -370,7 +397,8 @@ def build_operational_review_payload(
         "db": db_info,
         "notify_new": {
             "latest": latest_notify_run,
-            "last_successful": health["last_successful_notify_run"],
+            "last_successful": last_successful_notify_run,
+            "last_successful_age_seconds": last_successful_age_seconds,
             "recent_runs": health["runs"],
         },
         "local_activity": {
@@ -452,12 +480,98 @@ def build_health_payload(
     return payload
 
 
-def _review_finding(level: str, code: str, message: str) -> dict:
-    return {
+def _notify_new_success_age_seconds(
+    generated_at: str,
+    last_successful_notify_run: dict | None,
+) -> int | None:
+    if not last_successful_notify_run:
+        return None
+    try:
+        generated = _parse_iso_datetime(generated_at)
+        finished = _parse_iso_datetime(last_successful_notify_run["finished_at"])
+    except (TypeError, ValueError):
+        return None
+    return max(0, int((generated - finished).total_seconds()))
+
+
+def _notify_new_success_age_finding(
+    age_seconds: int | None,
+    last_successful_notify_run: dict | None,
+) -> dict:
+    if not last_successful_notify_run:
+        return _review_finding(
+            "warning",
+            "notify_new_success_missing",
+            "No successful notify-new run has been recorded in local SQLite.",
+            observed_seconds=None,
+            threshold_seconds=NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS,
+        )
+    if age_seconds is None:
+        return _review_finding(
+            "warning",
+            "notify_new_success_age_unknown",
+            (
+                "Last successful notify-new timestamp could not be parsed: "
+                f"{last_successful_notify_run['finished_at']}."
+            ),
+            observed_seconds=None,
+            threshold_seconds=NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS,
+        )
+    if age_seconds >= NOTIFY_NEW_SUCCESS_CRITICAL_AFTER_SECONDS:
+        return _review_finding(
+            "critical",
+            "notify_new_success_critical_age",
+            (
+                "Last successful notify-new run is older than the critical "
+                "threshold."
+            ),
+            observed_seconds=age_seconds,
+            threshold_seconds=NOTIFY_NEW_SUCCESS_CRITICAL_AFTER_SECONDS,
+        )
+    if age_seconds >= NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS:
+        return _review_finding(
+            "warning",
+            "notify_new_success_warning_age",
+            (
+                "Last successful notify-new run is older than the warning "
+                "threshold."
+            ),
+            observed_seconds=age_seconds,
+            threshold_seconds=NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS,
+        )
+    return _review_finding(
+        "ok",
+        "notify_new_success_fresh",
+        "Last successful notify-new run is within the freshness threshold.",
+        observed_seconds=age_seconds,
+        threshold_seconds=NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS,
+    )
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _review_finding(
+    level: str,
+    code: str,
+    message: str,
+    *,
+    observed_seconds: int | None = None,
+    threshold_seconds: int | None = None,
+) -> dict:
+    finding = {
         "code": code,
         "level": level,
         "message": message,
     }
+    if observed_seconds is not None or threshold_seconds is not None:
+        finding["observed_seconds"] = observed_seconds
+        finding["threshold_seconds"] = threshold_seconds
+    return finding
 
 
 def _review_status_and_risk(findings: list[dict]) -> tuple[str, str]:

@@ -4,6 +4,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime, timedelta
 from http.server import ThreadingHTTPServer
 
 import pytest
@@ -139,6 +140,41 @@ def test_web_api_health_and_runs_are_readonly_get_endpoints(monkeypatch, tmp_pat
     assert "read_only" in html
     assert "Recent Runs" in html
     assert "Run Log Events" in html
+
+
+def test_web_api_operational_review_includes_threshold_age_fields(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    finished_at = _iso_seconds_ago(60)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at=finished_at,
+            finished_at=finished_at,
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    with _web_server() as base_url:
+        review = _get_json(
+            f"{base_url}/api/operational-review?limit=5&sender_limit=5"
+        )
+
+    age_finding = _finding(review, "notify_new_success_fresh")
+    assert review["status"] == "ok"
+    assert review["thresholds"] == {
+        "notify_new_success_warning_after_seconds": 1800,
+        "notify_new_success_critical_after_seconds": 7200,
+    }
+    assert review["notify_new"]["last_successful_age_seconds"] < 1800
+    assert age_finding["observed_seconds"] < 1800
+    assert age_finding["threshold_seconds"] == 1800
 
 
 def test_web_api_filters_run_log_events_by_status_and_finished_range(
@@ -774,3 +810,16 @@ def _get_json(url: str) -> dict:
 def _get_text(url: str) -> str:
     with urllib.request.urlopen(url, timeout=5) as response:
         return response.read().decode("utf-8")
+
+
+def _iso_seconds_ago(seconds: int) -> str:
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat(
+        timespec="seconds"
+    )
+
+
+def _finding(payload: dict, code: str) -> dict:
+    for finding in payload["findings"]:
+        if finding["code"] == code:
+            return finding
+    raise AssertionError(f"missing finding {code}")
