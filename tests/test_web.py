@@ -191,6 +191,117 @@ def test_web_api_operational_review_includes_threshold_age_fields(
     assert age_finding["threshold_seconds"] == 1800
 
 
+@pytest.mark.parametrize(
+    "case_name,expected",
+    [
+        (
+            "malformed_success_timestamp",
+            {
+                "age": None,
+                "db_error_type": None,
+                "db_readable": True,
+                "finding_codes": [
+                    "db_readable",
+                    "latest_notify_new_completed",
+                    "notify_new_success_age_unknown",
+                ],
+                "risk": "medium",
+                "status": "warning",
+            },
+        ),
+        (
+            "stale_success",
+            {
+                "age_min": 1800,
+                "db_error_type": None,
+                "db_readable": True,
+                "finding_codes": [
+                    "db_readable",
+                    "latest_notify_new_completed",
+                    "notify_new_success_warning_age",
+                ],
+                "risk": "medium",
+                "status": "warning",
+            },
+        ),
+        (
+            "corrupt_db",
+            {
+                "age": None,
+                "db_error_type": "DatabaseError",
+                "db_readable": False,
+                "finding_codes": [
+                    "db_unreadable",
+                    "notify_new_never_recorded",
+                ],
+                "risk": "high",
+                "status": "critical",
+            },
+        ),
+    ],
+)
+def test_operational_review_contract_parity_for_edge_cases(
+    monkeypatch,
+    capsys,
+    tmp_path,
+    case_name,
+    expected,
+):
+    db_path = tmp_path / f"{case_name}.sqlite3"
+    _write_review_edge_case_db(db_path, case_name)
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    direct_payload = build_operational_review_payload(
+        _load_settings(),
+        limit=3,
+        sender_limit=2,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mail-agent",
+            "review",
+            "--limit",
+            "3",
+            "--sender-limit",
+            "2",
+            "--json",
+        ],
+    )
+    cli.main()
+    cli_payload = json.loads(capsys.readouterr().out)
+    with _web_server() as base_url:
+        web_payload = _get_json(
+            f"{base_url}/api/operational-review?limit=3&sender_limit=2"
+        )
+
+    contracts = [
+        _review_contract(direct_payload),
+        _review_contract(cli_payload),
+        _review_contract(web_payload),
+    ]
+    assert contracts[0] == contracts[1] == contracts[2]
+    assert contracts[0]["status"] == expected["status"]
+    assert contracts[0]["risk"] == expected["risk"]
+    assert contracts[0]["db_readable"] is expected["db_readable"]
+    assert contracts[0]["db_error_type"] == expected["db_error_type"]
+    assert contracts[0]["finding_codes"] == expected["finding_codes"]
+    if "age" in expected:
+        assert contracts[0]["last_successful_age_seconds"] == expected["age"]
+    else:
+        assert contracts[0]["last_successful_age_seconds"] >= expected["age_min"]
+
+    assert db_path.exists() is True
+    assert direct_payload["safety"] == {
+        "diagnostic_read_only": True,
+        "gmail_called": False,
+        "scheduler_checked": False,
+        "scheduler_modified": False,
+        "telegram_called": False,
+    }
+
+
 def test_web_api_filters_run_log_events_by_status_and_finished_range(
     monkeypatch,
     tmp_path,
@@ -796,6 +907,52 @@ def test_web_loopback_bind_host_detection():
     assert is_loopback_bind_host("::1") is True
     assert is_loopback_bind_host("0.0.0.0") is False
     assert is_loopback_bind_host("192.168.1.10") is False
+
+
+def _write_review_edge_case_db(db_path, case_name: str) -> None:
+    if case_name == "corrupt_db":
+        db_path.write_bytes(b"not a sqlite database")
+        return
+
+    db.init_db(db_path)
+    if case_name == "malformed_success_timestamp":
+        finished_at = "not-a-timestamp"
+    elif case_name == "stale_success":
+        finished_at = _iso_seconds_ago(1900)
+    else:
+        raise AssertionError(f"unknown review edge case {case_name}")
+
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at=finished_at,
+            finished_at=finished_at,
+        )
+
+
+def _review_contract(payload: dict) -> dict:
+    return {
+        "db_error_type": payload["db"]["error_type"],
+        "db_exists": payload["db"]["exists"],
+        "db_readable": payload["db"]["readable"],
+        "finding_codes": [finding["code"] for finding in payload["findings"]],
+        "last_successful_age_seconds": payload["notify_new"][
+            "last_successful_age_seconds"
+        ],
+        "risk": payload["risk"],
+        "status": payload["status"],
+        "thresholds": payload["thresholds"],
+    }
+
+
+def _load_settings():
+    from mail_agent.config import load_settings
+
+    return load_settings()
 
 
 def _message(uid: str, sender: str, date: str) -> NormalizedMessage:
