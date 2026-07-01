@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -13,6 +12,12 @@ from mail_agent import db
 from mail_agent.audit import log_event
 from mail_agent.classifier import classify
 from mail_agent.config import DEFAULT_PROJECT_DIR, load_settings
+from mail_agent.diagnostics import (
+    active_account_email,
+    active_provider,
+    build_health_payload,
+    build_runs_payload,
+)
 from mail_agent.mail.gmail_api import GmailApiClient
 from mail_agent.mail.imap_client import ImapClient
 from mail_agent.safety import SafetyPolicy
@@ -54,6 +59,9 @@ def main() -> None:
         action="store_true",
         help="Print recent notify-new runs as JSON for local monitoring.",
     )
+    web = subparsers.add_parser("web")
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--port", type=int, default=8765)
     check_mail = subparsers.add_parser("check-mail")
     check_mail.add_argument("--limit", type=int, default=10)
     send_telegram = subparsers.add_parser("send-summary")
@@ -99,67 +107,42 @@ def main() -> None:
     if args.command == "runs":
         if args.limit < 1:
             raise SystemExit("ERROR: --limit must be at least 1")
-        if not settings.db_path.exists():
-            if args.json:
-                print(
-                    json.dumps(
-                        {
-                            "db": str(settings.db_path),
-                            "last_successful_notify_run": None,
-                            "runs": [],
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    )
+        payload = build_runs_payload(settings, limit=args.limit)
+        if args.json:
+            print(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
                 )
-                return
+            )
+            return
+        if not settings.db_path.exists():
             print(f"No DB found: {settings.db_path}")
             return
-        with db.connect(settings.db_path) as conn:
-            run_rows = db.fetch_run_logs(conn, command="notify-new", limit=args.limit)
-            latest_successful_notify_run = db.fetch_latest_successful_run_log(
-                conn,
-                command="notify-new",
+        print(f"DB: {settings.db_path}")
+        if not payload["runs"]:
+            print("No notify-new runs recorded.")
+            return
+        print(f"Latest notify-new runs (limit={args.limit}):")
+        for row in payload["runs"]:
+            print(_format_run_log_row(row))
+        if payload["last_successful_notify_run"]:
+            print(
+                "Last successful notify-new run: "
+                f"{payload['last_successful_notify_run']['finished_at']}"
             )
-            if args.json:
-                print(
-                    json.dumps(
-                        {
-                            "db": str(settings.db_path),
-                            "last_successful_notify_run": (
-                                _run_log_row_to_dict(latest_successful_notify_run)
-                                if latest_successful_notify_run
-                                else None
-                            ),
-                            "runs": [_run_log_row_to_dict(row) for row in run_rows],
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    )
-                )
-                return
-            print(f"DB: {settings.db_path}")
-            if not run_rows:
-                print("No notify-new runs recorded.")
-                return
-            print(f"Latest notify-new runs (limit={args.limit}):")
-            for row in run_rows:
-                print(_format_run_log_row(row))
-            if latest_successful_notify_run:
-                print(
-                    "Last successful notify-new run: "
-                    f"{latest_successful_notify_run['finished_at']}"
-                )
         return
 
     if args.command == "health":
         if args.limit < 1:
             raise SystemExit("ERROR: --limit must be at least 1")
-        payload = _build_health_payload(
+        payload = build_health_payload(
             settings,
             run_limit=args.limit,
             include_scheduler=not args.skip_scheduler,
             scheduler_task_name=args.task_name,
+            scheduler_fetcher=_fetch_scheduler_status,
         )
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
@@ -168,13 +151,21 @@ def main() -> None:
         return
 
     if args.command == "status":
-        payload = _build_health_payload(
+        payload = build_health_payload(
             settings,
             run_limit=1,
             include_scheduler=False,
             scheduler_task_name="MailAgentNotifyNew",
         )
         _print_health_payload(payload)
+        return
+
+    if args.command == "web":
+        if not (1 <= args.port <= 65535):
+            raise SystemExit("ERROR: --port must be between 1 and 65535")
+        from mail_agent.web import run_web_server
+
+        run_web_server(host=args.host, port=args.port)
         return
 
     if args.command == "bot":
@@ -325,15 +316,11 @@ def main() -> None:
             return
 
 def _active_provider(settings) -> str:
-    if settings.mail_backend == "gmail_api":
-        return settings.gmail_api.provider
-    return settings.imap_account.provider
+    return active_provider(settings)
 
 
 def _active_account_email(settings) -> str:
-    if settings.mail_backend == "gmail_api":
-        return settings.gmail_api.account_email
-    return settings.imap_account.account_email
+    return active_account_email(settings)
 
 
 def _build_mail_client(settings, safety: SafetyPolicy):
@@ -364,95 +351,6 @@ def _format_run_log_row(row) -> str:
         ]
         line += " | error=" + ": ".join(part for part in error_parts if part)
     return line
-
-
-def _run_log_row_to_dict(row) -> dict:
-    return {
-        "account": row["account"],
-        "command": row["command"],
-        "error": row["error"],
-        "error_phase": row["error_phase"],
-        "error_type": row["error_type"],
-        "existing_count": row["existing_count"],
-        "finished_at": row["finished_at"],
-        "id": row["id"],
-        "limit": row["limit_value"],
-        "new_count": row["new_count"],
-        "notified_count": row["notified_count"],
-        "provider": row["provider"],
-        "started_at": row["started_at"],
-        "status": row["status"],
-    }
-
-
-def _build_health_payload(
-    settings,
-    *,
-    run_limit: int,
-    include_scheduler: bool,
-    scheduler_task_name: str,
-) -> dict:
-    payload = {
-        "account": _active_account_email(settings),
-        "backend": settings.mail_backend,
-        "db": {
-            "audit_events": None,
-            "error": None,
-            "error_type": None,
-            "exists": settings.db_path.exists(),
-            "messages": None,
-            "path": str(settings.db_path),
-            "readable": False,
-        },
-        "last_successful_notify_run": None,
-        "latest_notify_run": None,
-        "mode": settings.mode.value,
-        "provider": _active_provider(settings),
-        "runs": [],
-        "scheduler": None,
-    }
-
-    if settings.db_path.exists():
-        try:
-            with db.connect(settings.db_path) as conn:
-                payload["db"]["messages"] = conn.execute(
-                    "SELECT COUNT(*) FROM messages"
-                ).fetchone()[0]
-                payload["db"]["audit_events"] = conn.execute(
-                    "SELECT COUNT(*) FROM audit_log"
-                ).fetchone()[0]
-                latest_notify_run = db.fetch_latest_run_log(conn, command="notify-new")
-                latest_successful_notify_run = db.fetch_latest_successful_run_log(
-                    conn,
-                    command="notify-new",
-                )
-                payload["latest_notify_run"] = (
-                    _run_log_row_to_dict(latest_notify_run)
-                    if latest_notify_run
-                    else None
-                )
-                payload["last_successful_notify_run"] = (
-                    _run_log_row_to_dict(latest_successful_notify_run)
-                    if latest_successful_notify_run
-                    else None
-                )
-                payload["runs"] = [
-                    _run_log_row_to_dict(row)
-                    for row in db.fetch_run_logs(
-                        conn,
-                        command="notify-new",
-                        limit=run_limit,
-                    )
-                ]
-                payload["db"]["readable"] = True
-        except sqlite3.Error as exc:
-            payload["db"]["error_type"] = type(exc).__name__
-            payload["db"]["error"] = str(exc)
-
-    if include_scheduler:
-        payload["scheduler"] = _fetch_scheduler_status(scheduler_task_name)
-
-    return payload
 
 
 def _fetch_scheduler_status(task_name: str) -> dict:

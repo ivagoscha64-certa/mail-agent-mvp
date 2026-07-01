@@ -198,6 +198,60 @@ To skip the Task Scheduler query and read only SQLite/config state:
 mail-agent health --skip-scheduler
 ```
 
+## Local Read-Only Web Panel
+
+To inspect local agent state in a browser, start the local web panel:
+
+```powershell
+mail-agent web
+```
+
+By default it listens on:
+
+```text
+http://127.0.0.1:8765
+```
+
+The host and port can be changed for local diagnostics:
+
+```powershell
+mail-agent web --host 127.0.0.1 --port 8765
+```
+
+The web panel is diagnostic/read-only. It reads local configuration and local
+SQLite state only. It does not call Gmail, does not send Telegram messages, does
+not query or modify Windows Task Scheduler, and does not create or migrate the
+SQLite DB during diagnostic reads. SQLite is opened in read-only mode for
+diagnostic queries.
+
+The panel exposes only `GET` endpoints:
+
+- `GET /` - dashboard with local health, latest `notify-new` status, recent
+  runs, and run log event filters.
+- `GET /audit` - audit events and message statistics page with GET filters.
+- `GET /api/health?limit=` - JSON local health payload. `limit` controls recent
+  run count and defaults to `10`.
+- `GET /api/runs?limit=` - JSON recent `notify-new` runs from local SQLite.
+  `limit` defaults to `10`.
+- `GET /api/audit-events?limit=&action=&status=&account=` - JSON audit events.
+  `limit` defaults to `25`; `action`, `status`, and `account` are exact-match
+  filters.
+- `GET /api/message-stats?sender_limit=&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`
+  - JSON message counts by day and top senders. `sender_limit` controls top
+  sender count and defaults to `10`; `limit` is still accepted as a
+  backward-compatible alias when `sender_limit` is omitted. Dates are inclusive
+  ISO date filters.
+- `GET /api/run-log-events?limit=&command=&status=&finished_from=YYYY-MM-DD&finished_to=YYYY-MM-DD`
+  - JSON run log events across recorded commands. `limit` defaults to `10`;
+  `command` and `status` are exact-match filters; `finished_from` and
+  `finished_to` are inclusive ISO date filters based on `finished_at`.
+
+Invalid `limit` or `sender_limit` values, invalid dates, or date ranges where
+the start is after the end return HTTP 400 JSON errors. Missing DBs are reported
+as diagnostics: JSON responses include `exists: false`, `readable: false`, and
+empty result lists; the missing DB file and parent directory are not created by
+these reads.
+
 ## Operations Checklist
 
 Before enabling unattended polling:
