@@ -198,6 +198,25 @@ To skip the Task Scheduler query and read only SQLite/config state:
 mail-agent health --skip-scheduler
 ```
 
+To generate a minimal local operational review without calling Gmail, Telegram,
+or Task Scheduler:
+
+```powershell
+mail-agent review
+```
+
+For local monitors or scripts:
+
+```powershell
+mail-agent review --limit 10 --sender-limit 10 --json
+```
+
+`review` reports `status` as `ok`, `warning`, or `critical`, and `risk` as
+`low`, `medium`, or `high`. Missing DBs are `warning`/`medium`; unreadable,
+corrupt, old-schema DBs, or a latest failed `notify-new` run are
+`critical`/`high`. The command opens SQLite only in read-only mode and does not
+create a missing DB file or parent directory.
+
 ## Local Read-Only Web Panel
 
 To inspect local agent state in a browser, start the local web panel:
@@ -257,6 +276,9 @@ The panel exposes only `GET` endpoints:
   - JSON run log events across recorded commands. `limit` defaults to `10`;
   `command` and `status` are exact-match filters; `finished_from` and
   `finished_to` are inclusive ISO date filters based on `finished_at`.
+- `GET /api/operational-review?limit=&sender_limit=` - JSON read-only
+  operational review. `limit` controls recent run log counts and defaults to
+  `10`; `sender_limit` controls top sender count and defaults to `10`.
 - `GET /favicon.ico` - empty `204 No Content` response to keep browser smoke
   checks free of favicon 404 noise.
 
@@ -321,6 +343,26 @@ HTTP 400 with `{"error": "..."}` for invalid query parameters.
   - Missing DB: `exists: false`, `readable: false`, `run_log_events: []`;
     filters are still echoed; no DB file or parent directory is created.
 
+- `GET /api/operational-review?limit=&sender_limit=`
+  - Query: `limit` integer, default `10`, minimum `1`; `sender_limit` integer,
+    default `10`, minimum `1`.
+  - Response fields: `status`, `risk`, `generated_at`, `config`, `safety`,
+    `db`, `notify_new`, `local_activity`, and `findings`.
+  - `config` summarizes `mode`, `backend`, `provider`, `account`, and
+    `db_path`.
+  - `safety` explicitly reports that diagnostics are read-only and that Gmail,
+    Telegram, and Scheduler were not called or modified.
+  - `db` uses the same shape as `/api/health` DB info.
+  - `notify_new` includes `latest`, `last_successful`, and `recent_runs`.
+  - `local_activity` includes nested `message_stats` and `run_log_events`
+    payloads.
+  - Status/risk mapping: healthy DB plus completed latest `notify-new` is
+    `ok`/`low`; missing DB or no recorded `notify-new` run is
+    `warning`/`medium`; unreadable/corrupt/old-schema DB or latest failed
+    `notify-new` is `critical`/`high`.
+  - Missing DB: reported as diagnostics; no DB file or parent directory is
+    created.
+
 ## Operations Checklist
 
 Before enabling unattended polling:
@@ -337,13 +379,19 @@ mail-agent health --skip-scheduler
 mail-agent runs --limit 10
 ```
 
-3. Preview the scheduled task without creating it:
+3. Generate the local operational review:
+
+```powershell
+mail-agent review --json
+```
+
+4. Preview the scheduled task without creating it:
 
 ```powershell
 .\scripts\Register-NotifyNewTask.ps1
 ```
 
-4. Inspect whether the task is already registered:
+5. Inspect whether the task is already registered:
 
 ```powershell
 .\scripts\Register-NotifyNewTask.ps1 -Status

@@ -15,6 +15,7 @@ from mail_agent.diagnostics import (
     build_audit_events_payload,
     build_health_payload,
     build_message_stats_payload,
+    build_operational_review_payload,
     build_run_log_events_payload,
     build_runs_payload,
 )
@@ -42,6 +43,7 @@ def test_diagnostics_uses_readonly_payload_without_creating_missing_db(
     audit = build_audit_events_payload(settings, limit=10)
     stats = build_message_stats_payload(settings, sender_limit=10)
     run_log = build_run_log_events_payload(settings, limit=10)
+    review = build_operational_review_payload(settings, limit=10, sender_limit=10)
 
     assert db_path.exists() is False
     assert db_path.parent.exists() is False
@@ -75,6 +77,10 @@ def test_diagnostics_uses_readonly_payload_without_creating_missing_db(
     }
     assert run_log["readable"] is False
     assert run_log["run_log_events"] == []
+    assert review["status"] == "warning"
+    assert review["risk"] == "medium"
+    assert review["db"]["exists"] is False
+    assert review["local_activity"]["message_stats"]["top_senders"] == []
 
 
 def test_web_api_health_and_runs_are_readonly_get_endpoints(monkeypatch, tmp_path):
@@ -112,6 +118,9 @@ def test_web_api_health_and_runs_are_readonly_get_endpoints(monkeypatch, tmp_pat
     with _web_server() as base_url:
         health = _get_json(f"{base_url}/api/health")
         runs = _get_json(f"{base_url}/api/runs?limit=1")
+        review = _get_json(
+            f"{base_url}/api/operational-review?limit=1&sender_limit=1"
+        )
         html = _get_text(f"{base_url}/")
 
     assert health["mode"] == "read_only"
@@ -122,6 +131,10 @@ def test_web_api_health_and_runs_are_readonly_get_endpoints(monkeypatch, tmp_pat
     assert health["scheduler"] is None
     assert len(runs["runs"]) == 1
     assert runs["runs"][0]["status"] == "failed"
+    assert review["status"] == "critical"
+    assert review["risk"] == "high"
+    assert review["notify_new"]["latest"]["status"] == "failed"
+    assert review["safety"]["scheduler_checked"] is False
     assert "Mail Agent Panel" in html
     assert "read_only" in html
     assert "Recent Runs" in html
@@ -425,6 +438,9 @@ def test_web_api_handles_missing_db_without_creating_it(monkeypatch, tmp_path):
             "?limit=10&command=notify-new&status=failed"
             "&finished_from=2026-06-29&finished_to=2026-06-30"
         )
+        review = _get_json(
+            f"{base_url}/api/operational-review?limit=10&sender_limit=7"
+        )
         html = _get_text(
             f"{base_url}/audit"
             "?action=read_new_message&date_from=2026-06-29&date_to=2026-06-30"
@@ -462,6 +478,9 @@ def test_web_api_handles_missing_db_without_creating_it(monkeypatch, tmp_path):
     }
     assert run_log["readable"] is False
     assert run_log["run_log_events"] == []
+    assert review["status"] == "warning"
+    assert review["risk"] == "medium"
+    assert review["db"]["exists"] is False
     assert "Mail Agent Audit" in html
 
 
@@ -514,6 +533,9 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
             "?limit=2&command=notify-new&status=failed"
             "&finished_from=2026-06-29&finished_to=2026-06-30"
         )
+        review = _get_json(
+            f"{base_url}/api/operational-review?limit=2&sender_limit=3"
+        )
 
     assert db_path.exists() is False
     assert db_path.parent.exists() is False
@@ -553,6 +575,38 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
         "status": "failed",
     }
     assert run_log["run_log_events"] == []
+    assert review["safety"] == {
+        "diagnostic_read_only": True,
+        "gmail_called": False,
+        "scheduler_checked": False,
+        "scheduler_modified": False,
+        "telegram_called": False,
+    }
+    assert review["local_activity"]["message_stats"]["filters"]["sender_limit"] == 3
+
+
+def test_web_api_operational_review_rejects_invalid_params(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(tmp_path / "missing.sqlite3"))
+
+    with _web_server() as base_url:
+        try:
+            _get_text(f"{base_url}/api/operational-review?limit=0")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+            limit_payload = json.loads(exc.read().decode("utf-8"))
+        else:
+            raise AssertionError("Expected HTTP 400")
+
+        try:
+            _get_text(f"{base_url}/api/operational-review?sender_limit=0")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+            sender_limit_payload = json.loads(exc.read().decode("utf-8"))
+        else:
+            raise AssertionError("Expected HTTP 400")
+
+    assert limit_payload == {"error": "limit must be at least 1"}
+    assert sender_limit_payload == {"error": "sender_limit must be at least 1"}
 
 
 def test_web_api_rejects_invalid_limit(monkeypatch, tmp_path):

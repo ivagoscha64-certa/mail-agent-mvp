@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
@@ -269,6 +269,118 @@ def build_message_stats_payload(
     return payload
 
 
+def build_operational_review_payload(
+    settings,
+    *,
+    limit: int,
+    sender_limit: int,
+) -> dict:
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds")
+    health = build_health_payload(
+        settings,
+        run_limit=limit,
+        include_scheduler=False,
+        scheduler_task_name="MailAgentNotifyNew",
+    )
+    stats = build_message_stats_payload(settings, sender_limit=sender_limit)
+    run_log = build_run_log_events_payload(settings, limit=limit)
+
+    findings: list[dict] = []
+    db_info = health["db"]
+    latest_notify_run = health["latest_notify_run"]
+
+    if not db_info["exists"]:
+        findings.append(
+            _review_finding(
+                "warning",
+                "db_missing",
+                "SQLite DB is missing; diagnostics did not create it.",
+            )
+        )
+    elif not db_info["readable"]:
+        findings.append(
+            _review_finding(
+                "critical",
+                "db_unreadable",
+                (
+                    "SQLite DB exists but could not be fully read: "
+                    f"{db_info['error_type']}: {db_info['error']}"
+                ),
+            )
+        )
+    else:
+        findings.append(
+            _review_finding(
+                "ok",
+                "db_readable",
+                "SQLite DB is present and readable in read-only mode.",
+            )
+        )
+
+    if latest_notify_run and latest_notify_run["status"] == "failed":
+        findings.append(
+            _review_finding(
+                "critical",
+                "latest_notify_new_failed",
+                (
+                    "Latest notify-new run failed"
+                    f" at {latest_notify_run['finished_at']}."
+                ),
+            )
+        )
+    elif latest_notify_run:
+        findings.append(
+            _review_finding(
+                "ok",
+                "latest_notify_new_completed",
+                (
+                    "Latest notify-new run completed"
+                    f" at {latest_notify_run['finished_at']}."
+                ),
+            )
+        )
+    else:
+        findings.append(
+            _review_finding(
+                "warning",
+                "notify_new_never_recorded",
+                "No notify-new run has been recorded in local SQLite.",
+            )
+        )
+
+    status, risk = _review_status_and_risk(findings)
+    return {
+        "status": status,
+        "risk": risk,
+        "generated_at": generated_at,
+        "config": {
+            "account": active_account_email(settings),
+            "backend": settings.mail_backend,
+            "db_path": str(settings.db_path),
+            "mode": settings.mode.value,
+            "provider": active_provider(settings),
+        },
+        "safety": {
+            "diagnostic_read_only": True,
+            "gmail_called": False,
+            "scheduler_checked": False,
+            "scheduler_modified": False,
+            "telegram_called": False,
+        },
+        "db": db_info,
+        "notify_new": {
+            "latest": latest_notify_run,
+            "last_successful": health["last_successful_notify_run"],
+            "recent_runs": health["runs"],
+        },
+        "local_activity": {
+            "message_stats": stats,
+            "run_log_events": run_log,
+        },
+        "findings": findings,
+    }
+
+
 def build_health_payload(
     settings,
     *,
@@ -338,6 +450,23 @@ def build_health_payload(
         payload["scheduler"] = scheduler_fetcher(scheduler_task_name)
 
     return payload
+
+
+def _review_finding(level: str, code: str, message: str) -> dict:
+    return {
+        "code": code,
+        "level": level,
+        "message": message,
+    }
+
+
+def _review_status_and_risk(findings: list[dict]) -> tuple[str, str]:
+    levels = {finding["level"] for finding in findings}
+    if "critical" in levels:
+        return "critical", "high"
+    if "warning" in levels:
+        return "warning", "medium"
+    return "ok", "low"
 
 
 def connect_readonly(db_path: Path) -> sqlite3.Connection:

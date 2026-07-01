@@ -5,6 +5,8 @@ from pathlib import Path
 
 from mail_agent import db
 from mail_agent.__main__ import _fetch_scheduler_status, _format_run_log_row, main
+from mail_agent.config import load_settings
+from mail_agent.diagnostics import build_operational_review_payload
 
 
 def test_run_log_tracks_latest_and_latest_success(tmp_path):
@@ -359,6 +361,185 @@ def test_health_command_json_handles_corrupt_db(monkeypatch, capsys, tmp_path):
     assert payload["db"]["readable"] is False
     assert payload["db"]["error_type"] == "DatabaseError"
     assert "database" in payload["db"]["error"]
+
+
+def test_operational_review_handles_missing_db_without_creating_it(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "missing-dir" / "missing.sqlite3"
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    assert db_path.exists() is False
+    assert db_path.parent.exists() is False
+    assert payload["status"] == "warning"
+    assert payload["risk"] == "medium"
+    assert payload["db"]["exists"] is False
+    assert payload["safety"] == {
+        "diagnostic_read_only": True,
+        "gmail_called": False,
+        "scheduler_checked": False,
+        "scheduler_modified": False,
+        "telegram_called": False,
+    }
+    assert {finding["code"] for finding in payload["findings"]} == {
+        "db_missing",
+        "notify_new_never_recorded",
+    }
+
+
+def test_operational_review_reports_healthy_db(monkeypatch, tmp_path):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:00:00+00:00",
+            finished_at="2026-06-30T00:00:03+00:00",
+            limit_value=25,
+            new_count=2,
+            existing_count=3,
+            notified_count=1,
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    assert payload["status"] == "ok"
+    assert payload["risk"] == "low"
+    assert payload["db"]["exists"] is True
+    assert payload["db"]["readable"] is True
+    assert payload["notify_new"]["latest"]["status"] == "completed"
+    assert [finding["code"] for finding in payload["findings"]] == [
+        "db_readable",
+        "latest_notify_new_completed",
+    ]
+
+
+def test_operational_review_reports_latest_failed_run(monkeypatch, tmp_path):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:00:00+00:00",
+            finished_at="2026-06-30T00:00:03+00:00",
+        )
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="failed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:10:00+00:00",
+            finished_at="2026-06-30T00:10:01+00:00",
+            error_phase="telegram_send",
+            error_type="RuntimeError",
+            error="Telegram unavailable",
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    assert payload["status"] == "critical"
+    assert payload["risk"] == "high"
+    assert payload["notify_new"]["latest"]["status"] == "failed"
+    assert "latest_notify_new_failed" in {
+        finding["code"] for finding in payload["findings"]
+    }
+
+
+def test_operational_review_reports_old_db_missing_run_log(monkeypatch, tmp_path):
+    db_path = tmp_path / "old.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE audit_log (id INTEGER PRIMARY KEY)")
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    assert payload["status"] == "critical"
+    assert payload["risk"] == "high"
+    assert payload["db"]["readable"] is False
+    assert payload["db"]["error_type"] == "OperationalError"
+    assert "run_log" in payload["db"]["error"]
+    assert "db_unreadable" in {finding["code"] for finding in payload["findings"]}
+
+
+def test_operational_review_reports_corrupt_db(monkeypatch, tmp_path):
+    db_path = tmp_path / "corrupt.sqlite3"
+    db_path.write_bytes(b"not a sqlite database")
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    payload = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+
+    assert payload["status"] == "critical"
+    assert payload["risk"] == "high"
+    assert payload["db"]["readable"] is False
+    assert payload["db"]["error_type"] == "DatabaseError"
+    assert "database" in payload["db"]["error"]
+
+
+def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:00:00+00:00",
+            finished_at="2026-06-30T00:00:03+00:00",
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["mail-agent", "review", "--limit", "2", "--sender-limit", "2", "--json"],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
+    assert payload["risk"] == "low"
+    assert payload["config"]["db_path"] == str(db_path)
+    assert payload["notify_new"]["latest"]["status"] == "completed"
 
 
 def test_scheduler_status_handles_json_parse_error(monkeypatch, tmp_path):

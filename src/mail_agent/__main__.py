@@ -16,6 +16,7 @@ from mail_agent.diagnostics import (
     active_account_email,
     active_provider,
     build_health_payload,
+    build_operational_review_payload,
     build_runs_payload,
 )
 from mail_agent.mail.gmail_api import GmailApiClient
@@ -58,6 +59,14 @@ def main() -> None:
         "--json",
         action="store_true",
         help="Print recent notify-new runs as JSON for local monitoring.",
+    )
+    review = subparsers.add_parser("review")
+    review.add_argument("--limit", type=int, default=10)
+    review.add_argument("--sender-limit", type=int, default=10)
+    review.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a read-only operational review JSON payload.",
     )
     web = subparsers.add_parser("web")
     web.add_argument("--host", default="127.0.0.1")
@@ -156,6 +165,22 @@ def main() -> None:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             return
         _print_health_payload(payload)
+        return
+
+    if args.command == "review":
+        if args.limit < 1:
+            raise SystemExit("ERROR: --limit must be at least 1")
+        if args.sender_limit < 1:
+            raise SystemExit("ERROR: --sender-limit must be at least 1")
+        payload = build_operational_review_payload(
+            settings,
+            limit=args.limit,
+            sender_limit=args.sender_limit,
+        )
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            return
+        _print_operational_review_payload(payload)
         return
 
     if args.command == "status":
@@ -496,6 +521,17 @@ def _print_health_payload(payload: dict) -> None:
         )
     else:
         print(f"Scheduler: task '{scheduler['task_name']}' is not registered")
+
+
+def _print_operational_review_payload(payload: dict) -> None:
+    print(f"Operational status: {payload['status']}")
+    print(f"Risk: {payload['risk']}")
+    print(f"Generated at: {payload['generated_at']}")
+    print(f"DB: {payload['db']['path']}")
+    print(f"Backend: {payload['config']['backend']}")
+    print(f"Account: {payload['config']['account']}")
+    for finding in payload["findings"]:
+        print(f"- {finding['level']}: {finding['code']} - {finding['message']}")
 
 
 def _write_notify_run_log(db_path: Path, payload: dict) -> None:

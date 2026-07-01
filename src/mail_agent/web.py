@@ -12,6 +12,7 @@ from mail_agent.diagnostics import (
     build_audit_events_payload,
     build_health_payload,
     build_message_stats_payload,
+    build_operational_review_payload,
     build_run_log_events_payload,
     build_runs_payload,
 )
@@ -134,6 +135,19 @@ class MailAgentWebHandler(BaseHTTPRequestHandler):
                     status=_query_value(query, "status"),
                     finished_from=_query_value(query, "finished_from"),
                     finished_to=_query_value(query, "finished_to"),
+                )
+                self._send_json(payload)
+                return
+
+            if parsed.path == "/api/operational-review":
+                payload = build_operational_review_payload(
+                    load_settings(),
+                    limit=_limit_from_query(parsed.query, default=10),
+                    sender_limit=_limit_from_query(
+                        parsed.query,
+                        default=10,
+                        param="sender_limit",
+                    ),
                 )
                 self._send_json(payload)
                 return
