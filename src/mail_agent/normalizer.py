@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from email.message import EmailMessage, Message
-from email.utils import getaddresses
+from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 
 from mail_agent.models import NormalizedMessage, Provider
@@ -40,6 +40,15 @@ def _payload_text(message: Message, content_type: str) -> str:
     return payload.decode(charset, errors="replace")
 
 
+def _normalized_message_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return parsedate_to_datetime(value).isoformat()
+    except (IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
 def normalize_imap_message(
     *,
     provider: Provider,
@@ -70,7 +79,7 @@ def normalize_imap_message(
         sender=message.get("From", ""),
         recipients=recipients,
         subject=message.get("Subject", ""),
-        date=message.get("Date"),
+        date=_normalized_message_date(message.get("Date")),
         text=_payload_text(message, "text/plain"),
         html=html,
         headers=headers,
