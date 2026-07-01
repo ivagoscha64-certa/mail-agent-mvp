@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -151,6 +152,8 @@ def test_web_api_health_and_runs_are_readonly_get_endpoints(monkeypatch, tmp_pat
     assert "Last Successful Age Seconds" in review_html
     assert "latest_notify_new_failed" in review_html
     assert "Database Summary" in review_html
+    assert "Schema Compatible" in review_html
+    assert "Expected Schema Version" in review_html
     assert "Safety Flags" in review_html
     assert "Local Message Stats" in review_html
     assert "Run Log Summary" in review_html
@@ -206,6 +209,9 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                     "notify_new_success_age_unknown",
                 ],
                 "risk": "medium",
+                "schema_compatible": True,
+                "schema_inspected": True,
+                "schema_missing_tables": [],
                 "status": "warning",
             },
         ),
@@ -221,7 +227,37 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                     "notify_new_success_warning_age",
                 ],
                 "risk": "medium",
+                "schema_compatible": True,
+                "schema_inspected": True,
+                "schema_missing_tables": [],
                 "status": "warning",
+            },
+        ),
+        (
+            "old_schema",
+            {
+                "age": None,
+                "db_error_type": "OperationalError",
+                "db_readable": False,
+                "finding_codes": [
+                    "db_unreadable",
+                    "notify_new_never_recorded",
+                ],
+                "risk": "high",
+                "schema_compatible": False,
+                "schema_inspected": True,
+                "schema_missing_tables": [
+                    "accounts",
+                    "approval_actions",
+                    "drafts",
+                    "message_classifications",
+                    "recommendations",
+                    "run_log",
+                    "spam_signals",
+                    "telegram_notifications",
+                    "unsubscribe_candidates",
+                ],
+                "status": "critical",
             },
         ),
         (
@@ -235,6 +271,9 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                     "notify_new_never_recorded",
                 ],
                 "risk": "high",
+                "schema_compatible": None,
+                "schema_inspected": False,
+                "schema_missing_tables": [],
                 "status": "critical",
             },
         ),
@@ -286,6 +325,9 @@ def test_operational_review_contract_parity_for_edge_cases(
     assert contracts[0]["risk"] == expected["risk"]
     assert contracts[0]["db_readable"] is expected["db_readable"]
     assert contracts[0]["db_error_type"] == expected["db_error_type"]
+    assert contracts[0]["schema_compatible"] is expected["schema_compatible"]
+    assert contracts[0]["schema_inspected"] is expected["schema_inspected"]
+    assert contracts[0]["schema_missing_tables"] == expected["schema_missing_tables"]
     assert contracts[0]["finding_codes"] == expected["finding_codes"]
     if "age" in expected:
         assert contracts[0]["last_successful_age_seconds"] == expected["age"]
@@ -643,6 +685,8 @@ def test_web_api_handles_missing_db_without_creating_it(monkeypatch, tmp_path):
     assert review["status"] == "warning"
     assert review["risk"] == "medium"
     assert review["db"]["exists"] is False
+    assert review["db"]["schema"]["inspected"] is False
+    assert review["db"]["schema"]["compatible"] is None
     assert "Mail Agent Operational Review" in review_html
     assert "db_missing" in review_html
     assert "Diagnostic Read-only" in review_html
@@ -723,6 +767,13 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
     assert '<link rel="icon" href="data:,">' in review_html
     assert "No run log events recorded." in review_html
     assert "No senders recorded." in review_html
+    assert "Review Handoff" in review_html
+    assert (
+        'value="/api/operational-review?limit=2&amp;sender_limit=3"'
+        in review_html
+    )
+    assert 'href="/api/operational-review?limit=2&amp;sender_limit=3"' in review_html
+    assert 'value="mail-agent review --json --limit 2 --sender-limit 3"' in review_html
     assert "Sender Limit" in review_html
     assert ">3<" in review_html
     assert health["db"]["exists"] is False
@@ -756,6 +807,60 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
         "telegram_called": False,
     }
     assert review["local_activity"]["message_stats"]["filters"]["sender_limit"] == 3
+    assert review["db"]["schema"]["inspected"] is False
+    assert review["db"]["schema"]["compatible"] is None
+
+
+def test_review_page_polishes_narrow_layout_for_wide_tables_and_errors(
+    monkeypatch,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    long_error = (
+        "RepeatedFailureWithoutSpaces_"
+        "abcdefghijklmnopqrstuvwxyz0123456789" * 3
+    )
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="failed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:10:00+00:00",
+            finished_at="2026-06-30T00:10:01+00:00",
+            limit_value=25,
+            error_phase="gmail",
+            error_type="RuntimeError",
+            error=long_error,
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+
+    with _web_server() as base_url:
+        review_html = _get_text(f"{base_url}/review?limit=2&sender_limit=3")
+        review = _get_json(
+            f"{base_url}/api/operational-review?limit=2&sender_limit=3"
+        )
+
+    assert "table.wide-table" in review_html
+    assert "white-space: normal;" in review_html
+    assert "word-break: break-word;" in review_html
+    assert '<table class="wide-table">' in review_html
+    assert (
+        f'<td class="long-text">gmail: RuntimeError: {long_error}</td>'
+        in review_html
+    )
+    assert "font-variant-numeric: tabular-nums;" in review_html
+    assert 'type="text" readonly' in review_html
+    assert review["safety"] == {
+        "diagnostic_read_only": True,
+        "gmail_called": False,
+        "scheduler_checked": False,
+        "scheduler_modified": False,
+        "telegram_called": False,
+    }
 
 
 def test_web_api_operational_review_rejects_invalid_params(monkeypatch, tmp_path):
@@ -913,6 +1018,11 @@ def _write_review_edge_case_db(db_path, case_name: str) -> None:
     if case_name == "corrupt_db":
         db_path.write_bytes(b"not a sqlite database")
         return
+    if case_name == "old_schema":
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY)")
+            conn.execute("CREATE TABLE audit_log (id INTEGER PRIMARY KEY)")
+        return
 
     db.init_db(db_path)
     if case_name == "malformed_success_timestamp":
@@ -944,6 +1054,9 @@ def _review_contract(payload: dict) -> dict:
             "last_successful_age_seconds"
         ],
         "risk": payload["risk"],
+        "schema_compatible": payload["db"]["schema"]["compatible"],
+        "schema_inspected": payload["db"]["schema"]["inspected"],
+        "schema_missing_tables": payload["db"]["schema"]["missing_tables"],
         "status": payload["status"],
         "thresholds": payload["thresholds"],
     }

@@ -221,6 +221,150 @@ run is `critical`/`high`. A readable DB with no recorded `notify-new` run is
 `warning`/`medium`. The command opens SQLite only in read-only mode and does not
 create a missing DB file or parent directory.
 
+The `health --json` and `review --json` payloads include `db.schema` with a
+small diagnostic schema summary. It reports `expected_version: 1`, whether the
+schema was inspected, whether the local table set is compatible, and any
+`missing_tables`. Old DBs are easier to recognize from `missing_tables` such as
+`run_log`, without relying only on SQLite error text.
+
+### Operational Review Troubleshooting Examples
+
+Use the finding `code` values to decide what to inspect next. These examples are
+read-only: they only call `review`, `health --skip-scheduler`, or `runs`, and do
+not call Gmail, Telegram, Scheduler, or create/migrate SQLite state.
+
+#### Warning: missing or empty local history
+
+Example findings:
+
+```json
+{
+  "status": "warning",
+  "risk": "medium",
+  "findings": [
+    {
+      "level": "warning",
+      "code": "db_missing",
+      "message": "SQLite DB is missing; diagnostics did not create it."
+    },
+    {
+      "level": "warning",
+      "code": "notify_new_never_recorded",
+      "message": "No notify-new run has been recorded in local SQLite."
+    }
+  ]
+}
+```
+
+Read-only checks:
+
+```powershell
+mail-agent review --json --limit 10 --sender-limit 10
+mail-agent health --skip-scheduler --json
+mail-agent runs --limit 10 --json
+```
+
+Interpretation: the local DB path is missing, or the DB exists but has no
+recorded `notify-new` run. Confirm `config.db_path` and `db.path` point to the
+expected local file. If this is a first install, the warning may simply mean no
+local polling run has been recorded yet.
+
+#### Warning: stale or unparseable success timestamp
+
+Example findings:
+
+```json
+{
+  "status": "warning",
+  "risk": "medium",
+  "findings": [
+    {
+      "level": "warning",
+      "code": "notify_new_success_warning_age",
+      "observed_seconds": 1900,
+      "threshold_seconds": 1800,
+      "message": "Last successful notify-new run is older than the warning threshold."
+    }
+  ]
+}
+```
+
+The related `notify_new_success_age_unknown` code means the last successful
+`notify-new` timestamp could not be parsed. Inspect only local records first:
+
+```powershell
+mail-agent review --json
+mail-agent runs --limit 10 --json
+```
+
+Interpretation: the last successful `notify-new` run is older than 30 minutes,
+or its `finished_at` value is malformed. Check whether the latest local run is
+recent, whether it failed, and whether the recorded timestamps look like ISO
+datetimes.
+
+#### Critical: latest notify-new failed
+
+Example finding:
+
+```json
+{
+  "status": "critical",
+  "risk": "high",
+  "findings": [
+    {
+      "level": "critical",
+      "code": "latest_notify_new_failed",
+      "message": "Latest notify-new run failed at 2026-06-30T00:10:01+00:00."
+    }
+  ]
+}
+```
+
+Read-only checks:
+
+```powershell
+mail-agent runs --limit 10 --json
+mail-agent review --json --limit 10 --sender-limit 10
+```
+
+Interpretation: inspect the latest run's `error_phase`, `error_type`, and
+`error` fields in local SQLite. Do not run live Gmail or Telegram commands while
+triaging unless you explicitly intend to exercise those integrations.
+
+#### Critical: unreadable, corrupt, or old-schema DB
+
+Example finding:
+
+```json
+{
+  "status": "critical",
+  "risk": "high",
+  "findings": [
+    {
+      "level": "critical",
+      "code": "db_unreadable",
+      "message": "SQLite DB exists but could not be fully read: OperationalError: no such table: run_log"
+    }
+  ]
+}
+```
+
+Read-only checks:
+
+```powershell
+mail-agent health --skip-scheduler --json
+mail-agent review --json
+```
+
+Interpretation: `db.error_type` and `db.error` identify the local SQLite read
+failure. Old schemas commonly surface as missing tables such as `run_log`;
+corrupt files usually surface as SQLite database errors. Diagnostic reads keep
+using SQLite read-only mode and do not repair, migrate, or replace the DB.
+When SQLite metadata can be read, `db.schema.inspected` is `true` and
+`db.schema.missing_tables` lists the expected schema tables that are absent. For
+corrupt files, schema inspection may remain `false` because even metadata could
+not be read.
+
 ## Local Read-Only Web Panel
 
 To inspect local agent state in a browser, start the local web panel:
@@ -266,8 +410,8 @@ The panel exposes only `GET` endpoints:
   string when either form is applied.
 - `GET /review?limit=&sender_limit=` - HTML operational review page showing
   status/risk, freshness thresholds, latest and last successful `notify-new`
-  ages, findings, DB summary, safety flags, local message stats, and run log
-  summary. `limit` controls recent run log counts and defaults to `10`;
+  ages, findings, DB summary, schema summary, safety flags, local message
+  stats, and run log summary. `limit` controls recent run log counts and defaults to `10`;
   `sender_limit` controls top sender count and defaults to `10`.
 - `GET /api/health?limit=` - JSON local health payload. `limit` controls recent
   run count and defaults to `10`.
@@ -297,6 +441,14 @@ as diagnostics: JSON responses include `exists: false`, `readable: false`, and
 empty result lists; the missing DB file and parent directory are not created by
 these reads.
 
+The `/review` page includes a read-only handoff section with a selectable JSON
+endpoint and matching local command. Use either form to export the same
+operational review payload without calling Gmail, Telegram, or Scheduler:
+
+```powershell
+mail-agent review --json --limit 10 --sender-limit 10
+```
+
 ### Local Web JSON Contract
 
 All JSON endpoints are diagnostic `GET` endpoints. They read local config and
@@ -308,7 +460,11 @@ HTTP 400 with `{"error": "..."}` for invalid query parameters.
   - Response fields: `mode`, `backend`, `provider`, `account`, `scheduler`,
     `db`, `latest_notify_run`, `last_successful_notify_run`, `runs`.
   - `db` includes `path`, `exists`, `readable`, `messages`, `audit_events`,
-    `error_type`, and `error`.
+    `error_type`, `error`, and `schema`.
+  - `db.schema` includes `expected_version`, `detected_version`, `inspected`,
+    `compatible`, `expected_tables`, `present_tables`, and `missing_tables`.
+    Old schemas usually have `inspected: true`, `compatible: false`, and one or
+    more `missing_tables`; corrupt DBs may have `inspected: false`.
   - Missing DB: `db.exists: false`, `db.readable: false`, `runs: []`, run
     summary fields are `null`; no DB file or parent directory is created.
 
@@ -365,6 +521,8 @@ HTTP 400 with `{"error": "..."}` for invalid query parameters.
   - `safety` explicitly reports that diagnostics are read-only and that Gmail,
     Telegram, and Scheduler were not called or modified.
   - `db` uses the same shape as `/api/health` DB info.
+  - `db.schema.expected_version` is `1`. `detected_version` is `1` only when
+    all expected tables are present; otherwise it is `null`.
   - `notify_new` includes `latest`, `last_successful`,
     `last_successful_age_seconds`, and `recent_runs`.
   - `local_activity` includes nested `message_stats` and `run_log_events`

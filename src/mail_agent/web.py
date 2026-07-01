@@ -6,7 +6,7 @@ from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from mail_agent.config import load_settings
 from mail_agent.diagnostics import (
@@ -95,16 +95,24 @@ class MailAgentWebHandler(BaseHTTPRequestHandler):
                 return
 
             if parsed.path == "/review":
+                limit = _limit_from_query(parsed.query, default=10)
+                sender_limit = _limit_from_query(
+                    parsed.query,
+                    default=10,
+                    param="sender_limit",
+                )
                 payload = build_operational_review_payload(
                     load_settings(),
-                    limit=_limit_from_query(parsed.query, default=10),
-                    sender_limit=_limit_from_query(
-                        parsed.query,
-                        default=10,
-                        param="sender_limit",
-                    ),
+                    limit=limit,
+                    sender_limit=sender_limit,
                 )
-                self._send_html(render_review_page(payload))
+                self._send_html(
+                    render_review_page(
+                        payload,
+                        limit=limit,
+                        sender_limit=sender_limit,
+                    )
+                )
                 return
 
             if parsed.path == "/api/health":
@@ -730,14 +738,21 @@ def render_audit_page(audit_payload: dict, stats_payload: dict) -> str:
 </html>"""
 
 
-def render_review_page(payload: dict) -> str:
+def render_review_page(payload: dict, *, limit: int, sender_limit: int) -> str:
     db_info = payload["db"]
+    schema = db_info["schema"]
     notify_new = payload["notify_new"]
     latest = notify_new["latest"]
     last_success = notify_new["last_successful"]
     thresholds = payload["thresholds"]
     stats = payload["local_activity"]["message_stats"]
     run_log = payload["local_activity"]["run_log_events"]
+    review_query = urlencode({"limit": limit, "sender_limit": sender_limit})
+    review_json_path = f"/api/operational-review?{review_query}"
+    review_cli_command = (
+        "mail-agent review --json "
+        f"--limit {limit} --sender-limit {sender_limit}"
+    )
 
     finding_rows = "\n".join(
         _render_finding_row(row) for row in payload["findings"]
@@ -746,7 +761,7 @@ def render_review_page(payload: dict) -> str:
         finding_rows = '<tr><td colspan="5" class="muted">No findings recorded.</td></tr>'
 
     sender_rows = "\n".join(
-        f"<tr><td>{_text(row['sender'])}</td>"
+        f'<tr><td class="long-text">{_text(row["sender"])}</td>'
         f"<td>{_number_or_none(row['count'])}</td>"
         f"<td>{_text(row['latest_created_at'])}</td></tr>"
         for row in stats["top_senders"]
@@ -770,6 +785,10 @@ def render_review_page(payload: dict) -> str:
     )
     if not run_log_rows:
         run_log_rows = '<tr><td colspan="9" class="muted">No run log events recorded.</td></tr>'
+
+    missing_tables = ", ".join(schema["missing_tables"])
+    if not missing_tables:
+        missing_tables = "none" if schema["inspected"] else "not inspected"
 
     return f"""<!doctype html>
 <html lang="en">
@@ -861,10 +880,37 @@ def render_review_page(payload: dict) -> str:
       color: var(--accent);
       font-weight: 700;
     }}
+    .handoff {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+    }}
+    .handoff-field {{
+      min-width: 0;
+    }}
+    .copy-value {{
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 40px;
+      margin-top: 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #f9fafb;
+      color: var(--text);
+      padding: 9px 10px;
+      font: 13px Consolas, "Courier New", monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .long-text {{
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
     table {{
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
+      font-variant-numeric: tabular-nums;
     }}
     th, td {{
       border-bottom: 1px solid var(--border);
@@ -882,11 +928,28 @@ def render_review_page(payload: dict) -> str:
       main {{
         padding: 18px 10px 28px;
       }}
+      section {{
+        padding: 14px 12px;
+      }}
+      .handoff {{
+        grid-template-columns: minmax(0, 1fr);
+      }}
       table {{
         display: block;
+        max-width: 100%;
         overflow-x: auto;
-        table-layout: auto;
-        white-space: nowrap;
+        table-layout: fixed;
+        white-space: normal;
+        -webkit-overflow-scrolling: touch;
+      }}
+      table.wide-table {{
+        min-width: 780px;
+      }}
+      th, td {{
+        padding: 8px 7px;
+      }}
+      td.long-text {{
+        min-width: 180px;
       }}
     }}
   </style>
@@ -895,6 +958,20 @@ def render_review_page(payload: dict) -> str:
   <main>
     <h1>Mail Agent Operational Review</h1>
     <div class="nav"><a href="/">Dashboard</a> | <a href="/audit">Audit events and message stats</a></div>
+    <section>
+      <h2>Review Handoff</h2>
+      <div class="handoff">
+        <div class="handoff-field">
+          <div class="label">JSON endpoint</div>
+          <input class="copy-value" type="text" readonly value="{_attr(review_json_path)}">
+          <p><a href="{_attr(review_json_path)}">Open JSON</a></p>
+        </div>
+        <div class="handoff-field">
+          <div class="label">Local command</div>
+          <input class="copy-value" type="text" readonly value="{_attr(review_cli_command)}">
+        </div>
+      </div>
+    </section>
     <section>
       <h2>Review Status</h2>
       <div class="grid">
@@ -917,7 +994,7 @@ def render_review_page(payload: dict) -> str:
     </section>
     <section>
       <h2>Findings</h2>
-      <table>
+      <table class="wide-table">
         <thead>
           <tr>
             <th>Level</th>
@@ -938,6 +1015,11 @@ def render_review_page(payload: dict) -> str:
         {_metric("Path", _text(db_info["path"]))}
         {_metric("Messages", _number_or_none(db_info["messages"]))}
         {_metric("Audit Events", _number_or_none(db_info["audit_events"]))}
+        {_metric("Schema Inspected", _yes_no(schema["inspected"]))}
+        {_metric("Schema Compatible", _yes_no_unknown(schema["compatible"]))}
+        {_metric("Expected Schema Version", _number_or_none(schema["expected_version"]))}
+        {_metric("Detected Schema Version", _number_or_none(schema["detected_version"]))}
+        {_metric("Missing Tables", _text(missing_tables))}
       </div>
       {_db_error(db_info)}
     </section>
@@ -988,7 +1070,7 @@ def render_review_page(payload: dict) -> str:
       </div>
       {_payload_error(run_log)}
       <h2>Run Log Events</h2>
-      <table>
+      <table class="wide-table">
         <thead>
           <tr>
             <th>Finished</th>
@@ -1005,7 +1087,7 @@ def render_review_page(payload: dict) -> str:
         <tbody>{run_log_rows}</tbody>
       </table>
       <h2>Recent notify-new Runs</h2>
-      <table>
+      <table class="wide-table">
         <thead>
           <tr>
             <th>Finished</th>
@@ -1063,8 +1145,8 @@ def _render_run_row(row: dict) -> str:
         f"<td>{_number_or_none(row['new_count'])}</td>"
         f"<td>{_number_or_none(row['existing_count'])}</td>"
         f"<td>{_number_or_none(row['notified_count'])}</td>"
-        f"<td>{_text(row['error_phase'] or '')}</td>"
-        f"<td>{_text(error)}</td>"
+        f'<td class="long-text">{_text(row["error_phase"] or "")}</td>'
+        f'<td class="long-text">{_text(error)}</td>'
         "</tr>"
     )
 
@@ -1087,7 +1169,7 @@ def _render_run_log_event_row(row: dict) -> str:
         f"<td>{_number_or_none(row['limit'])}</td>"
         f"<td>{_number_or_none(row['new_count'])}</td>"
         f"<td>{_number_or_none(row['notified_count'])}</td>"
-        f"<td>{_text(error)}</td>"
+        f'<td class="long-text">{_text(error)}</td>'
         "</tr>"
     )
 
@@ -1111,8 +1193,8 @@ def _render_finding_row(row: dict) -> str:
     return (
         "<tr>"
         f"<td>{_text(row['level'])}</td>"
-        f"<td>{_text(row['code'])}</td>"
-        f"<td>{_text(row['message'])}</td>"
+        f'<td class="long-text">{_text(row["code"])}</td>'
+        f'<td class="long-text">{_text(row["message"])}</td>'
         f"<td>{_number_or_none(row.get('observed_seconds'))}</td>"
         f"<td>{_number_or_none(row.get('threshold_seconds'))}</td>"
         "</tr>"
@@ -1240,6 +1322,12 @@ def _payload_error(payload: dict) -> str:
 
 def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def _yes_no_unknown(value: bool | None) -> str:
+    if value is None:
+        return '<span class="muted">unknown</span>'
+    return _yes_no(value)
 
 
 def _number_or_none(value) -> str:

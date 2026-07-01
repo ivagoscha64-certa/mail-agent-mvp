@@ -14,6 +14,20 @@ SchedulerFetcher = Callable[[str], dict]
 
 NOTIFY_NEW_SUCCESS_WARNING_AFTER_SECONDS = 1800
 NOTIFY_NEW_SUCCESS_CRITICAL_AFTER_SECONDS = 7200
+DIAGNOSTIC_SCHEMA_VERSION = 1
+EXPECTED_SCHEMA_TABLES = [
+    "accounts",
+    "approval_actions",
+    "audit_log",
+    "drafts",
+    "message_classifications",
+    "messages",
+    "recommendations",
+    "run_log",
+    "spam_signals",
+    "telegram_notifications",
+    "unsubscribe_candidates",
+]
 
 
 def active_provider(settings) -> str:
@@ -428,6 +442,7 @@ def build_health_payload(
             "messages": None,
             "path": str(settings.db_path),
             "readable": False,
+            "schema": _uninspected_schema_summary(),
         },
         "last_successful_notify_run": None,
         "latest_notify_run": None,
@@ -440,6 +455,7 @@ def build_health_payload(
     if settings.db_path.exists():
         try:
             with connect_readonly(settings.db_path) as conn:
+                payload["db"]["schema"] = inspect_schema(conn)
                 payload["db"]["messages"] = conn.execute(
                     "SELECT COUNT(*) FROM messages"
                 ).fetchone()[0]
@@ -589,6 +605,45 @@ def connect_readonly(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def inspect_schema(conn: sqlite3.Connection) -> dict:
+    rows = conn.execute(
+        """
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+        ORDER BY name
+        """
+    ).fetchall()
+    present_tables = [row["name"] for row in rows]
+    missing_tables = [
+        table for table in EXPECTED_SCHEMA_TABLES if table not in present_tables
+    ]
+    return {
+        "compatible": not missing_tables,
+        "detected_version": (
+            DIAGNOSTIC_SCHEMA_VERSION if not missing_tables else None
+        ),
+        "expected_tables": EXPECTED_SCHEMA_TABLES,
+        "expected_version": DIAGNOSTIC_SCHEMA_VERSION,
+        "inspected": True,
+        "missing_tables": missing_tables,
+        "present_tables": present_tables,
+    }
+
+
+def _uninspected_schema_summary() -> dict:
+    return {
+        "compatible": None,
+        "detected_version": None,
+        "expected_tables": EXPECTED_SCHEMA_TABLES,
+        "expected_version": DIAGNOSTIC_SCHEMA_VERSION,
+        "inspected": False,
+        "missing_tables": [],
+        "present_tables": [],
+    }
 
 
 def audit_event_row_to_dict(row) -> dict:

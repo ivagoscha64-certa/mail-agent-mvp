@@ -193,6 +193,27 @@ def test_health_command_json_handles_missing_db_without_creating_it(
         "messages": None,
         "path": str(db_path),
         "readable": False,
+        "schema": {
+            "compatible": None,
+            "detected_version": None,
+            "expected_tables": [
+                "accounts",
+                "approval_actions",
+                "audit_log",
+                "drafts",
+                "message_classifications",
+                "messages",
+                "recommendations",
+                "run_log",
+                "spam_signals",
+                "telegram_notifications",
+                "unsubscribe_candidates",
+            ],
+            "expected_version": 1,
+            "inspected": False,
+            "missing_tables": [],
+            "present_tables": [],
+        },
     }
     assert payload["latest_notify_run"] is None
     assert payload["last_successful_notify_run"] is None
@@ -270,6 +291,10 @@ def test_health_command_json_includes_local_counts_runs_and_scheduler(
     assert payload["db"]["exists"] is True
     assert payload["db"]["messages"] == 1
     assert payload["db"]["audit_events"] == 1
+    assert payload["db"]["schema"]["compatible"] is True
+    assert payload["db"]["schema"]["detected_version"] == 1
+    assert payload["db"]["schema"]["missing_tables"] == []
+    assert "run_log" in payload["db"]["schema"]["present_tables"]
     assert payload["latest_notify_run"]["status"] == "completed"
     assert payload["last_successful_notify_run"]["notified_count"] == 1
     assert len(payload["runs"]) == 1
@@ -343,6 +368,10 @@ def test_health_command_json_handles_old_db_with_missing_run_log(
     assert payload["db"]["readable"] is False
     assert payload["db"]["error_type"] == "OperationalError"
     assert "run_log" in payload["db"]["error"]
+    assert payload["db"]["schema"]["inspected"] is True
+    assert payload["db"]["schema"]["compatible"] is False
+    assert "run_log" in payload["db"]["schema"]["missing_tables"]
+    assert payload["db"]["schema"]["present_tables"] == ["audit_log", "messages"]
     assert payload["latest_notify_run"] is None
 
 
@@ -362,6 +391,8 @@ def test_health_command_json_handles_corrupt_db(monkeypatch, capsys, tmp_path):
     assert payload["db"]["readable"] is False
     assert payload["db"]["error_type"] == "DatabaseError"
     assert "database" in payload["db"]["error"]
+    assert payload["db"]["schema"]["inspected"] is False
+    assert payload["db"]["schema"]["compatible"] is None
 
 
 def test_operational_review_handles_missing_db_without_creating_it(
@@ -382,6 +413,8 @@ def test_operational_review_handles_missing_db_without_creating_it(
     assert payload["status"] == "warning"
     assert payload["risk"] == "medium"
     assert payload["db"]["exists"] is False
+    assert payload["db"]["schema"]["inspected"] is False
+    assert payload["db"]["schema"]["compatible"] is None
     assert payload["safety"] == {
         "diagnostic_read_only": True,
         "gmail_called": False,
@@ -426,6 +459,9 @@ def test_operational_review_reports_healthy_db(monkeypatch, tmp_path):
     assert payload["risk"] == "low"
     assert payload["db"]["exists"] is True
     assert payload["db"]["readable"] is True
+    assert payload["db"]["schema"]["compatible"] is True
+    assert payload["db"]["schema"]["detected_version"] == 1
+    assert payload["db"]["schema"]["missing_tables"] == []
     assert payload["notify_new"]["latest"]["status"] == "completed"
     assert payload["thresholds"] == {
         "notify_new_success_warning_after_seconds": 1800,
@@ -604,6 +640,10 @@ def test_operational_review_reports_old_db_missing_run_log(monkeypatch, tmp_path
     assert payload["db"]["readable"] is False
     assert payload["db"]["error_type"] == "OperationalError"
     assert "run_log" in payload["db"]["error"]
+    assert payload["db"]["schema"]["inspected"] is True
+    assert payload["db"]["schema"]["compatible"] is False
+    assert "run_log" in payload["db"]["schema"]["missing_tables"]
+    assert payload["db"]["schema"]["present_tables"] == ["audit_log", "messages"]
     assert "db_unreadable" in {finding["code"] for finding in payload["findings"]}
 
 
@@ -623,6 +663,8 @@ def test_operational_review_reports_corrupt_db(monkeypatch, tmp_path):
     assert payload["db"]["readable"] is False
     assert payload["db"]["error_type"] == "DatabaseError"
     assert "database" in payload["db"]["error"]
+    assert payload["db"]["schema"]["inspected"] is False
+    assert payload["db"]["schema"]["compatible"] is None
 
 
 def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
