@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -22,6 +23,8 @@ from mail_agent.telegram_bot import (
     send_summary,
     validate_telegram_config,
 )
+
+SCHEDULER_STATUS_TIMEOUT_SECONDS = 10
 
 
 def main() -> None:
@@ -164,6 +167,22 @@ def main() -> None:
         _print_health_payload(payload)
         return
 
+    if args.command == "status":
+        payload = _build_health_payload(
+            settings,
+            run_limit=1,
+            include_scheduler=False,
+            scheduler_task_name="MailAgentNotifyNew",
+        )
+        _print_health_payload(payload)
+        return
+
+    if args.command == "bot":
+        try:
+            validate_telegram_config(settings.telegram)
+        except RuntimeError as exc:
+            raise SystemExit(f"ERROR: {exc}") from None
+
     db.init_db(settings.db_path)
     with db.connect(settings.db_path) as conn:
         db.upsert_account(
@@ -172,44 +191,6 @@ def main() -> None:
             _active_account_email(settings),
             settings.mode.value,
         )
-
-        if args.command == "status":
-            message_count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-            audit_count = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
-            latest_notify_run = db.fetch_latest_run_log(conn, command="notify-new")
-            latest_successful_notify_run = db.fetch_latest_successful_run_log(
-                conn,
-                command="notify-new",
-            )
-            print(f"Mode: {settings.mode.value}")
-            print(f"DB: {settings.db_path}")
-            print(f"Backend: {settings.mail_backend}")
-            print(f"Provider: {_active_provider(settings)}")
-            print(f"Account: {_active_account_email(settings)}")
-            print(f"Messages: {message_count}")
-            print(f"Audit events: {audit_count}")
-            if latest_notify_run:
-                print(
-                    "Last notify-new run: "
-                    f"{latest_notify_run['status']} at "
-                    f"{latest_notify_run['finished_at']} "
-                    f"(new={latest_notify_run['new_count']}, "
-                    f"existing={latest_notify_run['existing_count']}, "
-                    f"notified={latest_notify_run['notified_count']})"
-                )
-                if latest_notify_run["error"]:
-                    print(
-                        "Last notify-new error: "
-                        f"{latest_notify_run['error_phase'] or 'unknown'} "
-                        f"{latest_notify_run['error_type']}: "
-                        f"{latest_notify_run['error']}"
-                    )
-            if latest_successful_notify_run:
-                print(
-                    "Last successful notify-new run: "
-                    f"{latest_successful_notify_run['finished_at']}"
-                )
-            return
 
         if args.command == "check-mail":
             client = _build_mail_client(settings, safety)
@@ -416,9 +397,12 @@ def _build_health_payload(
         "backend": settings.mail_backend,
         "db": {
             "audit_events": None,
+            "error": None,
+            "error_type": None,
             "exists": settings.db_path.exists(),
             "messages": None,
             "path": str(settings.db_path),
+            "readable": False,
         },
         "last_successful_notify_run": None,
         "latest_notify_run": None,
@@ -429,34 +413,41 @@ def _build_health_payload(
     }
 
     if settings.db_path.exists():
-        with db.connect(settings.db_path) as conn:
-            payload["db"]["messages"] = conn.execute(
-                "SELECT COUNT(*) FROM messages"
-            ).fetchone()[0]
-            payload["db"]["audit_events"] = conn.execute(
-                "SELECT COUNT(*) FROM audit_log"
-            ).fetchone()[0]
-            latest_notify_run = db.fetch_latest_run_log(conn, command="notify-new")
-            latest_successful_notify_run = db.fetch_latest_successful_run_log(
-                conn,
-                command="notify-new",
-            )
-            payload["latest_notify_run"] = (
-                _run_log_row_to_dict(latest_notify_run) if latest_notify_run else None
-            )
-            payload["last_successful_notify_run"] = (
-                _run_log_row_to_dict(latest_successful_notify_run)
-                if latest_successful_notify_run
-                else None
-            )
-            payload["runs"] = [
-                _run_log_row_to_dict(row)
-                for row in db.fetch_run_logs(
+        try:
+            with db.connect(settings.db_path) as conn:
+                payload["db"]["messages"] = conn.execute(
+                    "SELECT COUNT(*) FROM messages"
+                ).fetchone()[0]
+                payload["db"]["audit_events"] = conn.execute(
+                    "SELECT COUNT(*) FROM audit_log"
+                ).fetchone()[0]
+                latest_notify_run = db.fetch_latest_run_log(conn, command="notify-new")
+                latest_successful_notify_run = db.fetch_latest_successful_run_log(
                     conn,
                     command="notify-new",
-                    limit=run_limit,
                 )
-            ]
+                payload["latest_notify_run"] = (
+                    _run_log_row_to_dict(latest_notify_run)
+                    if latest_notify_run
+                    else None
+                )
+                payload["last_successful_notify_run"] = (
+                    _run_log_row_to_dict(latest_successful_notify_run)
+                    if latest_successful_notify_run
+                    else None
+                )
+                payload["runs"] = [
+                    _run_log_row_to_dict(row)
+                    for row in db.fetch_run_logs(
+                        conn,
+                        command="notify-new",
+                        limit=run_limit,
+                    )
+                ]
+                payload["db"]["readable"] = True
+        except sqlite3.Error as exc:
+            payload["db"]["error_type"] = type(exc).__name__
+            payload["db"]["error"] = str(exc)
 
     if include_scheduler:
         payload["scheduler"] = _fetch_scheduler_status(scheduler_task_name)
@@ -470,6 +461,7 @@ def _fetch_scheduler_status(task_name: str) -> dict:
         return {
             "available": False,
             "error": "PowerShell is not available.",
+            "error_type": "PowerShellNotFound",
             "task_name": task_name,
         }
 
@@ -478,33 +470,63 @@ def _fetch_scheduler_status(task_name: str) -> dict:
         return {
             "available": False,
             "error": f"Scheduler helper script not found: {script_path}",
+            "error_type": "SchedulerScriptNotFound",
             "task_name": task_name,
         }
 
-    result = subprocess.run(
-        [
-            powershell,
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script_path),
-            "-TaskName",
-            task_name,
-            "-Status",
-            "-Json",
-        ],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+                "-TaskName",
+                task_name,
+                "-Status",
+                "-Json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SCHEDULER_STATUS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "available": False,
+            "error": f"Scheduler status command timed out after {exc.timeout} seconds.",
+            "error_type": "TimeoutExpired",
+            "task_name": task_name,
+        }
+    except OSError as exc:
+        return {
+            "available": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "task_name": task_name,
+        }
+
     if result.returncode != 0:
         return {
             "available": False,
             "error": (result.stderr or result.stdout).strip(),
+            "error_type": "SchedulerStatusCommandFailed",
+            "returncode": result.returncode,
             "task_name": task_name,
         }
 
-    payload = json.loads(result.stdout)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return {
+            "available": False,
+            "error": str(exc),
+            "error_type": "JSONDecodeError",
+            "stdout": result.stdout,
+            "task_name": task_name,
+        }
+
     payload["available"] = True
     return payload
 
@@ -517,8 +539,15 @@ def _print_health_payload(payload: dict) -> None:
     print(f"Account: {payload['account']}")
     if not payload["db"]["exists"]:
         print("DB exists: no")
+    elif not payload["db"]["readable"]:
+        print("DB exists: yes")
+        print(
+            "DB readable: no "
+            f"({payload['db']['error_type']}: {payload['db']['error']})"
+        )
     else:
         print("DB exists: yes")
+        print("DB readable: yes")
         print(f"Messages: {payload['db']['messages']}")
         print(f"Audit events: {payload['db']['audit_events']}")
 

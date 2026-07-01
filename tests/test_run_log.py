@@ -1,7 +1,10 @@
 import json
+import sqlite3
+import subprocess
+from pathlib import Path
 
 from mail_agent import db
-from mail_agent.__main__ import _format_run_log_row, main
+from mail_agent.__main__ import _fetch_scheduler_status, _format_run_log_row, main
 
 
 def test_run_log_tracks_latest_and_latest_success(tmp_path):
@@ -181,9 +184,12 @@ def test_health_command_json_handles_missing_db_without_creating_it(
     assert db_path.exists() is False
     assert payload["db"] == {
         "audit_events": None,
+        "error": None,
+        "error_type": None,
         "exists": False,
         "messages": None,
         "path": str(db_path),
+        "readable": False,
     }
     assert payload["latest_notify_run"] is None
     assert payload["last_successful_notify_run"] is None
@@ -273,3 +279,149 @@ def test_health_command_json_includes_local_counts_runs_and_scheduler(
         "state": None,
         "task_name": "MailAgentNotifyNew",
     }
+
+
+def test_status_command_handles_missing_db_without_creating_it(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "missing.sqlite3"
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr("sys.argv", ["mail-agent", "status"])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert db_path.exists() is False
+    assert "DB exists: no" in output
+    assert "Scheduler: skipped" in output
+
+
+def test_health_command_json_handles_existing_empty_db(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "empty.sqlite3"
+    db_path.write_bytes(b"")
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["mail-agent", "health", "--json", "--skip-scheduler"],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["db"]["exists"] is True
+    assert payload["db"]["readable"] is False
+    assert payload["db"]["error_type"] == "OperationalError"
+    assert "no such table" in payload["db"]["error"]
+    assert payload["runs"] == []
+
+
+def test_health_command_json_handles_old_db_with_missing_run_log(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "old.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE audit_log (id INTEGER PRIMARY KEY)")
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["mail-agent", "health", "--json", "--skip-scheduler"],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["db"]["exists"] is True
+    assert payload["db"]["readable"] is False
+    assert payload["db"]["error_type"] == "OperationalError"
+    assert "run_log" in payload["db"]["error"]
+    assert payload["latest_notify_run"] is None
+
+
+def test_health_command_json_handles_corrupt_db(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "corrupt.sqlite3"
+    db_path.write_bytes(b"not a sqlite database")
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["mail-agent", "health", "--json", "--skip-scheduler"],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["db"]["exists"] is True
+    assert payload["db"]["readable"] is False
+    assert payload["db"]["error_type"] == "DatabaseError"
+    assert "database" in payload["db"]["error"]
+
+
+def test_scheduler_status_handles_json_parse_error(monkeypatch, tmp_path):
+    _write_scheduler_script(tmp_path)
+    monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
+    monkeypatch.setattr("mail_agent.__main__.DEFAULT_PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "mail_agent.__main__.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            0,
+            stdout="not-json",
+            stderr="",
+        ),
+    )
+
+    payload = _fetch_scheduler_status("Task")
+
+    assert payload["available"] is False
+    assert payload["error_type"] == "JSONDecodeError"
+
+
+def test_scheduler_status_handles_subprocess_failure(monkeypatch, tmp_path):
+    _write_scheduler_script(tmp_path)
+    monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
+    monkeypatch.setattr("mail_agent.__main__.DEFAULT_PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "mail_agent.__main__.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            1,
+            stdout="",
+            stderr="failed",
+        ),
+    )
+
+    payload = _fetch_scheduler_status("Task")
+
+    assert payload == {
+        "available": False,
+        "error": "failed",
+        "error_type": "SchedulerStatusCommandFailed",
+        "returncode": 1,
+        "task_name": "Task",
+    }
+
+
+def test_scheduler_status_handles_timeout(monkeypatch, tmp_path):
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="powershell", timeout=10)
+
+    _write_scheduler_script(tmp_path)
+    monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
+    monkeypatch.setattr("mail_agent.__main__.DEFAULT_PROJECT_DIR", tmp_path)
+    monkeypatch.setattr("mail_agent.__main__.subprocess.run", raise_timeout)
+
+    payload = _fetch_scheduler_status("Task")
+
+    assert payload["available"] is False
+    assert payload["error_type"] == "TimeoutExpired"
+
+
+def _write_scheduler_script(project_dir: Path) -> None:
+    script_path = project_dir / "scripts" / "Register-NotifyNewTask.ps1"
+    script_path.parent.mkdir()
+    script_path.write_text("# test script", encoding="utf-8")

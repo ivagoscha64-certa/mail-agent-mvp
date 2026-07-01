@@ -151,8 +151,7 @@ def validate_telegram_config(config: TelegramConfig) -> None:
 
 
 def run_bot(config: TelegramConfig, conn: sqlite3.Connection) -> None:
-    if not config.bot_token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is empty. Fill .env before starting bot.")
+    validate_telegram_config(config)
 
     from telegram import Update
     from telegram.ext import Application, CommandHandler, ContextTypes
@@ -212,8 +211,6 @@ def run_bot(config: TelegramConfig, conn: sqlite3.Connection) -> None:
 
 
 def _is_allowed_chat(config: TelegramConfig, update) -> bool:
-    if not config.allowed_chat_id:
-        return True
     chat = update.effective_chat
     return bool(chat and str(chat.id) == config.allowed_chat_id)
 

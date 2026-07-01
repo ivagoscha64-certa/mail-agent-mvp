@@ -57,7 +57,9 @@ After authorization, read recent mail:
 mail-agent check-mail --limit 10
 ```
 
-Telegram bot starts only when `TELEGRAM_BOT_TOKEN` is filled:
+Telegram bot starts only when both `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_ALLOWED_CHAT_ID` are filled. This is deny-by-default: an empty
+allowed chat id never authorizes every Telegram chat.
 
 ```powershell
 mail-agent bot
@@ -158,7 +160,8 @@ mail-agent status
 ```
 
 `status` prints the latest `notify-new` run and the latest successful
-`notify-new` run when available.
+`notify-new` run when available. It is diagnostic/read-only: it does not call
+Gmail or Telegram and does not create the SQLite DB when the DB is missing.
 
 To inspect recent `notify-new` run history from local SQLite only:
 
@@ -180,7 +183,8 @@ mail-agent health
 
 `health` reads local SQLite counts, recent `notify-new` runs, and Windows Task
 Scheduler status. It does not call Gmail or Telegram, and it does not create or
-update the scheduled task.
+update the scheduled task. It reports missing, empty, old, or corrupt local DBs
+as diagnostics instead of creating or migrating them.
 
 For local monitors or scripts:
 

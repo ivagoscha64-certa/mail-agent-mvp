@@ -13,7 +13,12 @@ from mail_agent.models import (
 SECURITY_WORDS = ("пароль", "password", "login", "код", "2fa", "безопасность")
 NEWSLETTER_HEADERS = ("list-unsubscribe", "list-id")
 PROMO_WORDS = ("скидка", "акция", "sale", "promo", "купон")
-URGENT_RISK_WORDS = ("срочно оплат", "переведите", "подтвердите пароль", "verify password")
+URGENT_RISK_WORDS = (
+    "срочно оплат",
+    "переведите",
+    "подтвердите пароль",
+    "verify password",
+)
 
 
 def classify(message: NormalizedMessage) -> Classification:
@@ -69,4 +74,3 @@ def classify(message: NormalizedMessage) -> Classification:
         message_type=MessageType.UNKNOWN,
         reason="Нет специальных признаков; письмо оставлено для обычного просмотра.",
     )
-

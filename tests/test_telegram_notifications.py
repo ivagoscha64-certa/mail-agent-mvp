@@ -1,4 +1,7 @@
+import pytest
+
 from mail_agent import db
+from mail_agent.config import TelegramConfig
 from mail_agent.models import (
     Classification,
     Importance,
@@ -8,6 +11,7 @@ from mail_agent.models import (
     RecommendedAction,
     Risk,
 )
+from mail_agent.telegram_bot import _is_allowed_chat, run_bot
 
 
 def test_telegram_notification_baseline_prevents_old_resends(tmp_path):
@@ -37,6 +41,23 @@ def test_telegram_notification_baseline_prevents_old_resends(tmp_path):
         assert pending_after_mark == []
 
 
+def test_bot_refuses_to_start_without_allowed_chat_id(tmp_path):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+
+    with db.connect(db_path) as conn:
+        with pytest.raises(RuntimeError, match="TELEGRAM_ALLOWED_CHAT_ID"):
+            run_bot(TelegramConfig(bot_token="token", allowed_chat_id=""), conn)
+
+
+def test_bot_chat_filter_is_deny_by_default():
+    update = _Update(chat_id=123)
+
+    assert _is_allowed_chat(TelegramConfig(bot_token="token", allowed_chat_id=""), update) is False
+    assert _is_allowed_chat(TelegramConfig(bot_token="token", allowed_chat_id="456"), update) is False
+    assert _is_allowed_chat(TelegramConfig(bot_token="token", allowed_chat_id="123"), update) is True
+
+
 def _message(uid: str, subject: str) -> NormalizedMessage:
     return NormalizedMessage(
         provider=Provider.GMAIL,
@@ -62,3 +83,13 @@ def _important_classification() -> Classification:
         message_type=MessageType.SECURITY,
         reason="Important security message.",
     )
+
+
+class _Chat:
+    def __init__(self, chat_id: int) -> None:
+        self.id = chat_id
+
+
+class _Update:
+    def __init__(self, chat_id: int) -> None:
+        self.effective_chat = _Chat(chat_id)
