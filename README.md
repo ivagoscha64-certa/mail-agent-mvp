@@ -264,6 +264,11 @@ The panel exposes only `GET` endpoints:
 - `GET /audit` - audit events and message statistics page with GET filters.
   Its audit and statistics forms preserve the selected filters in the query
   string when either form is applied.
+- `GET /review?limit=&sender_limit=` - HTML operational review page showing
+  status/risk, freshness thresholds, latest and last successful `notify-new`
+  ages, findings, DB summary, safety flags, local message stats, and run log
+  summary. `limit` controls recent run log counts and defaults to `10`;
+  `sender_limit` controls top sender count and defaults to `10`.
 - `GET /api/health?limit=` - JSON local health payload. `limit` controls recent
   run count and defaults to `10`.
 - `GET /api/runs?limit=` - JSON recent `notify-new` runs from local SQLite.

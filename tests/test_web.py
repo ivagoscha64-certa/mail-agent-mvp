@@ -123,6 +123,7 @@ def test_web_api_health_and_runs_are_readonly_get_endpoints(monkeypatch, tmp_pat
             f"{base_url}/api/operational-review?limit=1&sender_limit=1"
         )
         html = _get_text(f"{base_url}/")
+        review_html = _get_text(f"{base_url}/review?limit=1&sender_limit=1")
 
     assert health["mode"] == "read_only"
     assert health["db"]["exists"] is True
@@ -140,6 +141,19 @@ def test_web_api_health_and_runs_are_readonly_get_endpoints(monkeypatch, tmp_pat
     assert "read_only" in html
     assert "Recent Runs" in html
     assert "Run Log Events" in html
+    assert 'href="/review"' in html
+    assert "Mail Agent Operational Review" in review_html
+    assert "Review Status" in review_html
+    assert "Freshness Thresholds" in review_html
+    assert "Warning After Seconds" in review_html
+    assert "1800" in review_html
+    assert "7200" in review_html
+    assert "Last Successful Age Seconds" in review_html
+    assert "latest_notify_new_failed" in review_html
+    assert "Database Summary" in review_html
+    assert "Safety Flags" in review_html
+    assert "Local Message Stats" in review_html
+    assert "Run Log Summary" in review_html
 
 
 def test_web_api_operational_review_includes_threshold_age_fields(
@@ -477,6 +491,7 @@ def test_web_api_handles_missing_db_without_creating_it(monkeypatch, tmp_path):
         review = _get_json(
             f"{base_url}/api/operational-review?limit=10&sender_limit=7"
         )
+        review_html = _get_text(f"{base_url}/review?limit=10&sender_limit=7")
         html = _get_text(
             f"{base_url}/audit"
             "?action=read_new_message&date_from=2026-06-29&date_to=2026-06-30"
@@ -517,6 +532,9 @@ def test_web_api_handles_missing_db_without_creating_it(monkeypatch, tmp_path):
     assert review["status"] == "warning"
     assert review["risk"] == "medium"
     assert review["db"]["exists"] is False
+    assert "Mail Agent Operational Review" in review_html
+    assert "db_missing" in review_html
+    assert "Diagnostic Read-only" in review_html
     assert "Mail Agent Audit" in html
 
 
@@ -553,6 +571,7 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
             "&account=missing@example.com&sender_limit=3"
             "&date_from=2026-06-29&date_to=2026-06-30"
         )
+        review_html = _get_text(f"{base_url}/review?limit=2&sender_limit=3")
         health = _get_json(f"{base_url}/api/health?limit=2")
         runs = _get_json(f"{base_url}/api/runs?limit=2")
         audit = _get_json(
@@ -580,6 +599,7 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
     assert "Run Log Events" in dashboard
     assert 'name="command" value="notify-new"' in dashboard
     assert "Mail Agent Audit" in audit_html
+    assert 'href="/review"' in audit_html
     assert '<link rel="icon" href="data:,">' in audit_html
     assert 'type="hidden" name="action" value="read_new_message"' in audit_html
     assert 'type="hidden" name="status" value="completed"' in audit_html
@@ -588,6 +608,12 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
     assert 'type="hidden" name="date_to" value="2026-06-30"' in audit_html
     assert 'name="sender_limit" value="3"' in audit_html
     assert "input.type !== 'hidden'" in audit_html
+    assert "Mail Agent Operational Review" in review_html
+    assert '<link rel="icon" href="data:,">' in review_html
+    assert "No run log events recorded." in review_html
+    assert "No senders recorded." in review_html
+    assert "Sender Limit" in review_html
+    assert ">3<" in review_html
     assert health["db"]["exists"] is False
     assert health["db"]["readable"] is False
     assert health["scheduler"] is None

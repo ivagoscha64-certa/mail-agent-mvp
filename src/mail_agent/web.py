@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -91,6 +92,19 @@ class MailAgentWebHandler(BaseHTTPRequestHandler):
                     date_to=_query_value(query, "date_to"),
                 )
                 self._send_html(render_audit_page(audit_payload, stats_payload))
+                return
+
+            if parsed.path == "/review":
+                payload = build_operational_review_payload(
+                    load_settings(),
+                    limit=_limit_from_query(parsed.query, default=10),
+                    sender_limit=_limit_from_query(
+                        parsed.query,
+                        default=10,
+                        param="sender_limit",
+                    ),
+                )
+                self._send_html(render_review_page(payload))
                 return
 
             if parsed.path == "/api/health":
@@ -380,7 +394,7 @@ def render_dashboard(payload: dict, run_log_payload: dict) -> str:
 <body>
   <main>
     <h1>Mail Agent Panel</h1>
-    <div class="nav"><a href="/audit">Audit events and message stats</a></div>
+    <div class="nav"><a href="/review">Operational review</a> | <a href="/audit">Audit events and message stats</a></div>
     <section>
       <h2>Local State</h2>
       <div class="grid">
@@ -645,7 +659,7 @@ def render_audit_page(audit_payload: dict, stats_payload: dict) -> str:
 <body>
   <main>
     <h1>Mail Agent Audit</h1>
-    <div class="nav"><a href="/">Dashboard</a></div>
+    <div class="nav"><a href="/">Dashboard</a> | <a href="/review">Operational review</a></div>
     <section>
       <h2>Database</h2>
       <div class="grid">
@@ -712,6 +726,302 @@ def render_audit_page(audit_payload: dict, stats_payload: dict) -> str:
       }});
     }});
   </script>
+</body>
+</html>"""
+
+
+def render_review_page(payload: dict) -> str:
+    db_info = payload["db"]
+    notify_new = payload["notify_new"]
+    latest = notify_new["latest"]
+    last_success = notify_new["last_successful"]
+    thresholds = payload["thresholds"]
+    stats = payload["local_activity"]["message_stats"]
+    run_log = payload["local_activity"]["run_log_events"]
+
+    finding_rows = "\n".join(
+        _render_finding_row(row) for row in payload["findings"]
+    )
+    if not finding_rows:
+        finding_rows = '<tr><td colspan="5" class="muted">No findings recorded.</td></tr>'
+
+    sender_rows = "\n".join(
+        f"<tr><td>{_text(row['sender'])}</td>"
+        f"<td>{_number_or_none(row['count'])}</td>"
+        f"<td>{_text(row['latest_created_at'])}</td></tr>"
+        for row in stats["top_senders"]
+    )
+    if not sender_rows:
+        sender_rows = '<tr><td colspan="3" class="muted">No senders recorded.</td></tr>'
+
+    day_rows = "\n".join(
+        f"<tr><td>{_text(row['day'])}</td><td>{_number_or_none(row['count'])}</td></tr>"
+        for row in stats["messages_by_day"]
+    )
+    if not day_rows:
+        day_rows = '<tr><td colspan="2" class="muted">No messages recorded.</td></tr>'
+
+    run_rows = "\n".join(_render_run_row(row) for row in notify_new["recent_runs"])
+    if not run_rows:
+        run_rows = '<tr><td colspan="8" class="muted">No notify-new runs recorded.</td></tr>'
+
+    run_log_rows = "\n".join(
+        _render_run_log_event_row(row) for row in run_log["run_log_events"]
+    )
+    if not run_log_rows:
+        run_log_rows = '<tr><td colspan="9" class="muted">No run log events recorded.</td></tr>'
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Mail Agent Operational Review</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #607080;
+      --border: #d9e0e7;
+      --accent: #0f766e;
+      --warn: #a04b00;
+    }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+      line-height: 1.45;
+    }}
+    main {{
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 18px 40px;
+    }}
+    h1 {{
+      margin: 0 0 18px;
+      font-size: 28px;
+      font-weight: 700;
+    }}
+    h2 {{
+      margin: 0 0 12px;
+      font-size: 18px;
+    }}
+    section {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+    }}
+    .metric {{
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      min-width: 0;
+    }}
+    .label {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }}
+    .value {{
+      margin-top: 4px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }}
+    .badge {{
+      display: inline-block;
+      color: #ffffff;
+      background: var(--accent);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-weight: 700;
+    }}
+    .muted {{
+      color: var(--muted);
+    }}
+    .error {{
+      color: var(--warn);
+      overflow-wrap: anywhere;
+    }}
+    .nav {{
+      margin: -8px 0 16px;
+    }}
+    a {{
+      color: var(--accent);
+      font-weight: 700;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }}
+    th, td {{
+      border-bottom: 1px solid var(--border);
+      padding: 9px 8px;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }}
+    th {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }}
+    @media (max-width: 760px) {{
+      main {{
+        padding: 18px 10px 28px;
+      }}
+      table {{
+        display: block;
+        overflow-x: auto;
+        table-layout: auto;
+        white-space: nowrap;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Mail Agent Operational Review</h1>
+    <div class="nav"><a href="/">Dashboard</a> | <a href="/audit">Audit events and message stats</a></div>
+    <section>
+      <h2>Review Status</h2>
+      <div class="grid">
+        {_metric("Status", f'<span class="badge">{_text(payload["status"])}</span>')}
+        {_metric("Risk", f'<span class="badge">{_text(payload["risk"])}</span>')}
+        {_metric("Generated", _text(payload["generated_at"]))}
+        {_metric("Mode", _text(payload["config"]["mode"]))}
+        {_metric("Account", _text(payload["config"]["account"]))}
+        {_metric("Backend", _text(payload["config"]["backend"]))}
+      </div>
+    </section>
+    <section>
+      <h2>Freshness Thresholds</h2>
+      <div class="grid">
+        {_metric("Warning After Seconds", _number_or_none(thresholds["notify_new_success_warning_after_seconds"]))}
+        {_metric("Critical After Seconds", _number_or_none(thresholds["notify_new_success_critical_after_seconds"]))}
+        {_metric("Latest notify-new Age", _age_or_none(latest, payload["generated_at"]))}
+        {_metric("Last Successful Age", _number_or_none(notify_new["last_successful_age_seconds"]))}
+      </div>
+    </section>
+    <section>
+      <h2>Findings</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Level</th>
+            <th>Code</th>
+            <th>Message</th>
+            <th>Observed Seconds</th>
+            <th>Threshold Seconds</th>
+          </tr>
+        </thead>
+        <tbody>{finding_rows}</tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Database Summary</h2>
+      <div class="grid">
+        {_metric("Exists", _yes_no(db_info["exists"]))}
+        {_metric("Readable", _yes_no(db_info["readable"]))}
+        {_metric("Path", _text(db_info["path"]))}
+        {_metric("Messages", _number_or_none(db_info["messages"]))}
+        {_metric("Audit Events", _number_or_none(db_info["audit_events"]))}
+      </div>
+      {_db_error(db_info)}
+    </section>
+    <section>
+      <h2>Safety Flags</h2>
+      <div class="grid">
+        {_metric("Diagnostic Read-only", _yes_no(payload["safety"]["diagnostic_read_only"]))}
+        {_metric("Gmail Called", _yes_no(payload["safety"]["gmail_called"]))}
+        {_metric("Telegram Called", _yes_no(payload["safety"]["telegram_called"]))}
+        {_metric("Scheduler Checked", _yes_no(payload["safety"]["scheduler_checked"]))}
+        {_metric("Scheduler Modified", _yes_no(payload["safety"]["scheduler_modified"]))}
+      </div>
+    </section>
+    <section>
+      <h2>notify-new Summary</h2>
+      <div class="grid">
+        {_metric("Latest Status", _text(latest["status"]) if latest else '<span class="muted">none</span>')}
+        {_metric("Latest Finished", _text(latest["finished_at"]) if latest else '<span class="muted">none</span>')}
+        {_metric("Last Successful Finished", _text(last_success["finished_at"]) if last_success else '<span class="muted">none</span>')}
+        {_metric("Last Successful Age Seconds", _number_or_none(notify_new["last_successful_age_seconds"]))}
+      </div>
+    </section>
+    <section>
+      <h2>Local Message Stats</h2>
+      <div class="grid">
+        {_metric("Total Messages", _number_or_none(stats["total_messages"]))}
+        {_metric("Stats Readable", _yes_no(stats["readable"]))}
+        {_metric("Sender Limit", _number_or_none(stats["filters"]["sender_limit"]))}
+      </div>
+      {_payload_error(stats)}
+      <h2>Messages By Day</h2>
+      <table>
+        <thead><tr><th>Day</th><th>Messages</th></tr></thead>
+        <tbody>{day_rows}</tbody>
+      </table>
+      <h2>Top Senders</h2>
+      <table>
+        <thead><tr><th>Sender</th><th>Messages</th><th>Latest Stored</th></tr></thead>
+        <tbody>{sender_rows}</tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Run Log Summary</h2>
+      <div class="grid">
+        {_metric("Run Log Readable", _yes_no(run_log["readable"]))}
+        {_metric("Run Log Rows", _number_or_none(len(run_log["run_log_events"])))}
+        {_metric("Recent notify-new Rows", _number_or_none(len(notify_new["recent_runs"])))}
+      </div>
+      {_payload_error(run_log)}
+      <h2>Run Log Events</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Finished</th>
+            <th>Command</th>
+            <th>Status</th>
+            <th>Account</th>
+            <th>Provider</th>
+            <th>Limit</th>
+            <th>New</th>
+            <th>Notified</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>{run_log_rows}</tbody>
+      </table>
+      <h2>Recent notify-new Runs</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Finished</th>
+            <th>Status</th>
+            <th>Limit</th>
+            <th>New</th>
+            <th>Existing</th>
+            <th>Notified</th>
+            <th>Phase</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>{run_rows}</tbody>
+      </table>
+    </section>
+  </main>
 </body>
 </html>"""
 
@@ -793,6 +1103,18 @@ def _render_audit_event_row(row: dict) -> str:
         f"<td>{_text(row['message_uid'] or '')}</td>"
         f"<td>{_text(row['reason'])}</td>"
         f"<td>{_text(metadata)}</td>"
+        "</tr>"
+    )
+
+
+def _render_finding_row(row: dict) -> str:
+    return (
+        "<tr>"
+        f"<td>{_text(row['level'])}</td>"
+        f"<td>{_text(row['code'])}</td>"
+        f"<td>{_text(row['message'])}</td>"
+        f"<td>{_number_or_none(row.get('observed_seconds'))}</td>"
+        f"<td>{_number_or_none(row.get('threshold_seconds'))}</td>"
         "</tr>"
     )
 
@@ -924,6 +1246,24 @@ def _number_or_none(value) -> str:
     if value is None:
         return '<span class="muted">none</span>'
     return escape(str(value))
+
+
+def _age_or_none(row: dict | None, generated_at: str) -> str:
+    if not row:
+        return '<span class="muted">none</span>'
+    try:
+        generated = _parse_iso_datetime(generated_at)
+        finished = _parse_iso_datetime(row["finished_at"])
+    except (KeyError, TypeError, ValueError):
+        return '<span class="muted">none</span>'
+    return _number_or_none(max(0, int((generated - finished).total_seconds())))
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _text(value) -> str:
