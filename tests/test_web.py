@@ -514,9 +514,16 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
     assert db_path.exists() is False
     assert db_path.parent.exists() is False
     assert "Mail Agent Panel" in dashboard
+    assert '<link rel="icon" href="data:,">' in dashboard
     assert "Run Log Events" in dashboard
     assert 'name="command" value="notify-new"' in dashboard
     assert "Mail Agent Audit" in audit_html
+    assert '<link rel="icon" href="data:,">' in audit_html
+    assert 'type="hidden" name="action" value="read_new_message"' in audit_html
+    assert 'type="hidden" name="status" value="completed"' in audit_html
+    assert 'type="hidden" name="account" value="missing@example.com"' in audit_html
+    assert 'type="hidden" name="date_from" value="2026-06-29"' in audit_html
+    assert 'type="hidden" name="date_to" value="2026-06-30"' in audit_html
     assert 'name="sender_limit" value="3"' in audit_html
     assert health["db"]["exists"] is False
     assert health["db"]["readable"] is False

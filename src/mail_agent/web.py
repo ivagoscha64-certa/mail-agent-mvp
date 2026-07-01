@@ -193,6 +193,7 @@ def render_dashboard(payload: dict, run_log_payload: dict) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>Mail Agent Panel</title>
   <style>
     :root {{
@@ -457,14 +458,15 @@ def render_audit_page(audit_payload: dict, stats_payload: dict) -> str:
     if not sender_rows:
         sender_rows = '<tr><td colspan="3" class="muted">No senders recorded.</td></tr>'
 
-    audit_filter_form = _render_audit_filter_form(audit_filters)
-    stats_filter_form = _render_stats_filter_form(stats_filters)
+    audit_filter_form = _render_audit_filter_form(audit_filters, stats_filters)
+    stats_filter_form = _render_stats_filter_form(stats_filters, audit_filters)
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>Mail Agent Audit</title>
   <style>
     :root {{
@@ -760,9 +762,12 @@ def _render_run_log_filter_form(filters: dict) -> str:
     )
 
 
-def _render_audit_filter_form(filters: dict) -> str:
+def _render_audit_filter_form(filters: dict, stats_filters: dict) -> str:
     return (
         '<form class="filters" method="get" action="/audit">'
+        f'{_hidden_input("date_from", stats_filters["date_from"])}'
+        f'{_hidden_input("date_to", stats_filters["date_to"])}'
+        f'{_hidden_input("sender_limit", stats_filters["sender_limit"])}'
         '<label>Action'
         f'<input name="action" value="{_attr(filters["action"] or "")}">'
         "</label>"
@@ -777,9 +782,12 @@ def _render_audit_filter_form(filters: dict) -> str:
     )
 
 
-def _render_stats_filter_form(filters: dict) -> str:
+def _render_stats_filter_form(filters: dict, audit_filters: dict) -> str:
     return (
         '<form class="filters" method="get" action="/audit">'
+        f'{_hidden_input("action", audit_filters["action"])}'
+        f'{_hidden_input("status", audit_filters["status"])}'
+        f'{_hidden_input("account", audit_filters["account"])}'
         '<label>Date From'
         f'<input type="date" name="date_from" value="{_attr(filters["date_from"] or "")}">'
         "</label>"
@@ -792,6 +800,12 @@ def _render_stats_filter_form(filters: dict) -> str:
         '<button type="submit">Filter Stats</button>'
         "</form>"
     )
+
+
+def _hidden_input(name: str, value) -> str:
+    if value is None:
+        return ""
+    return f'<input type="hidden" name="{_attr(name)}" value="{_attr(value)}">'
 
 
 def _run_summary_cells(row: dict | None) -> dict:

@@ -229,6 +229,8 @@ The panel exposes only `GET` endpoints:
 - `GET /` - dashboard with local health, latest `notify-new` status, recent
   runs, and run log event filters.
 - `GET /audit` - audit events and message statistics page with GET filters.
+  Its audit and statistics forms preserve the selected filters in the query
+  string when either form is applied.
 - `GET /api/health?limit=` - JSON local health payload. `limit` controls recent
   run count and defaults to `10`.
 - `GET /api/runs?limit=` - JSON recent `notify-new` runs from local SQLite.
