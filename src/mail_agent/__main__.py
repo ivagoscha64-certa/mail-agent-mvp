@@ -62,6 +62,14 @@ def main() -> None:
     web = subparsers.add_parser("web")
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8765)
+    web.add_argument(
+        "--allow-non-loopback",
+        action="store_true",
+        help=(
+            "Allow binding the read-only web panel to a non-loopback host such "
+            "as 0.0.0.0. This can expose local diagnostics on the network."
+        ),
+    )
     check_mail = subparsers.add_parser("check-mail")
     check_mail.add_argument("--limit", type=int, default=10)
     send_telegram = subparsers.add_parser("send-summary")
@@ -163,7 +171,15 @@ def main() -> None:
     if args.command == "web":
         if not (1 <= args.port <= 65535):
             raise SystemExit("ERROR: --port must be between 1 and 65535")
-        from mail_agent.web import run_web_server
+        from mail_agent.web import is_loopback_bind_host, run_web_server
+
+        if not args.allow_non_loopback and not is_loopback_bind_host(args.host):
+            raise SystemExit(
+                "ERROR: refusing to bind the web panel to non-loopback host "
+                f"{args.host!r}. Use --host 127.0.0.1 for local diagnostics or "
+                "add --allow-non-loopback only when you explicitly want network "
+                "exposure."
+            )
 
         run_web_server(host=args.host, port=args.port)
         return

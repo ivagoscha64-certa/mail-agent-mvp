@@ -1,11 +1,15 @@
 import json
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
+import pytest
+
 from mail_agent import db
+from mail_agent import __main__ as cli
 from mail_agent.audit import log_event
 from mail_agent.diagnostics import (
     build_audit_events_payload,
@@ -15,7 +19,7 @@ from mail_agent.diagnostics import (
     build_runs_payload,
 )
 from mail_agent.models import NormalizedMessage, Provider
-from mail_agent.web import MailAgentWebHandler
+from mail_agent.web import MailAgentWebHandler, is_loopback_bind_host
 
 
 def test_diagnostics_uses_readonly_payload_without_creating_missing_db(
@@ -525,6 +529,7 @@ def test_web_smoke_all_readonly_endpoints_do_not_create_missing_db_or_call_side_
     assert 'type="hidden" name="date_from" value="2026-06-29"' in audit_html
     assert 'type="hidden" name="date_to" value="2026-06-30"' in audit_html
     assert 'name="sender_limit" value="3"' in audit_html
+    assert "input.type !== 'hidden'" in audit_html
     assert health["db"]["exists"] is False
     assert health["db"]["readable"] is False
     assert health["scheduler"] is None
@@ -596,6 +601,85 @@ def test_web_api_rejects_invalid_run_log_finished_range(monkeypatch, tmp_path):
             raise AssertionError("Expected HTTP 400")
 
     assert payload == {"error": "finished_from must be on or before finished_to"}
+
+
+def test_web_favicon_is_empty_success_response(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(tmp_path / "missing.sqlite3"))
+
+    with _web_server() as base_url:
+        with urllib.request.urlopen(f"{base_url}/favicon.ico", timeout=5) as response:
+            body = response.read()
+
+    assert response.status == 204
+    assert body == b""
+
+
+def test_web_bind_host_defaults_to_loopback(monkeypatch):
+    called = {}
+
+    def fake_run_web_server(*, host: str, port: int) -> None:
+        called["host"] = host
+        called["port"] = port
+
+    monkeypatch.setattr(sys, "argv", ["mail-agent", "web"])
+    monkeypatch.setattr("mail_agent.web.run_web_server", fake_run_web_server)
+
+    cli.main()
+
+    assert called == {"host": "127.0.0.1", "port": 8765}
+
+
+def test_web_rejects_non_loopback_bind_host_without_explicit_allow(monkeypatch):
+    def fail_run_web_server(*, host: str, port: int) -> None:
+        raise AssertionError("web server should not start for unsafe host")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["mail-agent", "web", "--host", "0.0.0.0"],
+    )
+    monkeypatch.setattr("mail_agent.web.run_web_server", fail_run_web_server)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert "refusing to bind" in str(exc_info.value)
+    assert "--allow-non-loopback" in str(exc_info.value)
+
+
+def test_web_allows_non_loopback_bind_host_with_explicit_allow(monkeypatch):
+    called = {}
+
+    def fake_run_web_server(*, host: str, port: int) -> None:
+        called["host"] = host
+        called["port"] = port
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mail-agent",
+            "web",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8766",
+            "--allow-non-loopback",
+        ],
+    )
+    monkeypatch.setattr("mail_agent.web.run_web_server", fake_run_web_server)
+
+    cli.main()
+
+    assert called == {"host": "0.0.0.0", "port": 8766}
+
+
+def test_web_loopback_bind_host_detection():
+    assert is_loopback_bind_host("127.0.0.1") is True
+    assert is_loopback_bind_host("localhost") is True
+    assert is_loopback_bind_host("::1") is True
+    assert is_loopback_bind_host("0.0.0.0") is False
+    assert is_loopback_bind_host("192.168.1.10") is False
 
 
 def _message(uid: str, sender: str, date: str) -> NormalizedMessage:

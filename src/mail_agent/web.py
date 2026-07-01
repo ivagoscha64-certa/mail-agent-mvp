@@ -4,6 +4,7 @@ import json
 from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from ipaddress import ip_address
 from urllib.parse import parse_qs, urlparse
 
 from mail_agent.config import load_settings
@@ -18,6 +19,18 @@ from mail_agent.diagnostics import (
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+
+
+def is_loopback_bind_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 def run_web_server(*, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
@@ -132,6 +145,10 @@ class MailAgentWebHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(payload)
                 return
+
+            if parsed.path == "/favicon.ico":
+                self._send_no_content()
+                return
         except ValueError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -154,6 +171,11 @@ class MailAgentWebHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_no_content(self) -> None:
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
 
     def _send_html(
         self,
@@ -657,6 +679,25 @@ def render_audit_page(audit_payload: dict, stats_payload: dict) -> str:
       </table>
     </section>
   </main>
+  <script>
+    document.querySelectorAll('form.filters').forEach((form) => {{
+      form.addEventListener('submit', () => {{
+        form.querySelectorAll('input[type="hidden"][data-preserve-name]').forEach((hidden) => {{
+          const preserveName = hidden.dataset.preserveName;
+          const current = Array.from(document.querySelectorAll('input[name]')).find(
+            (input) => input.name === preserveName && input.type !== 'hidden'
+          );
+          if (current && current.value) {{
+            hidden.name = preserveName;
+            hidden.value = current.value;
+          }} else {{
+            hidden.removeAttribute('name');
+            hidden.value = '';
+          }}
+        }});
+      }});
+    }});
+  </script>
 </body>
 </html>"""
 
@@ -804,8 +845,11 @@ def _render_stats_filter_form(filters: dict, audit_filters: dict) -> str:
 
 def _hidden_input(name: str, value) -> str:
     if value is None:
-        return ""
-    return f'<input type="hidden" name="{_attr(name)}" value="{_attr(value)}">'
+        return f'<input type="hidden" data-preserve-name="{_attr(name)}" value="">'
+    return (
+        f'<input type="hidden" name="{_attr(name)}" value="{_attr(value)}"'
+        f' data-preserve-name="{_attr(name)}">'
+    )
 
 
 def _run_summary_cells(row: dict | None) -> dict:

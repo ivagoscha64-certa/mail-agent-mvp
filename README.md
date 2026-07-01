@@ -218,6 +218,16 @@ The host and port can be changed for local diagnostics:
 mail-agent web --host 127.0.0.1 --port 8765
 ```
 
+For safety, `mail-agent web` refuses non-loopback bind hosts such as `0.0.0.0`
+unless you explicitly allow network exposure:
+
+```powershell
+mail-agent web --host 0.0.0.0 --allow-non-loopback
+```
+
+Use that opt-in only on a trusted network. The panel exposes local diagnostic
+state and is intended to stay bound to `127.0.0.1` for normal use.
+
 The web panel is diagnostic/read-only. It reads local configuration and local
 SQLite state only. It does not call Gmail, does not send Telegram messages, does
 not query or modify Windows Task Scheduler, and does not create or migrate the
@@ -247,6 +257,8 @@ The panel exposes only `GET` endpoints:
   - JSON run log events across recorded commands. `limit` defaults to `10`;
   `command` and `status` are exact-match filters; `finished_from` and
   `finished_to` are inclusive ISO date filters based on `finished_at`.
+- `GET /favicon.ico` - empty `204 No Content` response to keep browser smoke
+  checks free of favicon 404 noise.
 
 Invalid `limit` or `sender_limit` values, invalid dates, or date ranges where
 the start is after the end return HTTP 400 JSON errors. Missing DBs are reported
