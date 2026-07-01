@@ -44,6 +44,29 @@ function Assert-ReadOnlyMode {
     }
 }
 
+function Convert-SchedulerDateTimeToJsonValue {
+    param([AllowNull()]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [string]) {
+        $trimmed = $Value.Trim()
+        if ($trimmed.Length -eq 0 -or $trimmed -eq "Never" -or $trimmed -eq "Never Run") {
+            return $null
+        }
+        $Value = [datetime]::Parse($trimmed, [Globalization.CultureInfo]::CurrentCulture)
+    }
+
+    $dateTime = [datetime]$Value
+    if ($dateTime -eq [datetime]::MinValue -or $dateTime.Year -le 1900) {
+        return $null
+    }
+
+    return ([datetimeoffset]$dateTime).ToString("yyyy-MM-ddTHH:mm:sszzz", [Globalization.CultureInfo]::InvariantCulture)
+}
+
 function Show-TaskPlan {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
@@ -62,6 +85,10 @@ function Show-TaskPlan {
     Write-Host "  Read-only mode:   enforced by project .env/config"
     Write-Host ""
     Write-Host "No task was created. Re-run with -Register to create it."
+}
+
+if ($MyInvocation.InvocationName -eq ".") {
+    return
 }
 
 $selectedActions = @($Register, $Unregister, $Status) | Where-Object { $_ }
@@ -117,9 +144,9 @@ if ($Status) {
             task_name = $TaskName
             registered = $true
             state = [string]$task.State
-            last_run = $info.LastRunTime
+            last_run = Convert-SchedulerDateTimeToJsonValue $info.LastRunTime
             last_result = $info.LastTaskResult
-            next_run = $info.NextRunTime
+            next_run = Convert-SchedulerDateTimeToJsonValue $info.NextRunTime
         } | ConvertTo-Json -Compress
         exit 0
     }
