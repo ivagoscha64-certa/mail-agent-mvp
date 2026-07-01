@@ -222,10 +222,11 @@ run is `critical`/`high`. A readable DB with no recorded `notify-new` run is
 create a missing DB file or parent directory.
 
 The `health --json` and `review --json` payloads include `db.schema` with a
-small diagnostic schema summary. It reports `expected_version: 1`, whether the
-schema was inspected, whether the local table set is compatible, and any
-`missing_tables`. Old DBs are easier to recognize from `missing_tables` such as
-`run_log`, without relying only on SQLite error text.
+small diagnostic schema summary. It reports `expected_version: 1`, the detected
+explicit `schema_metadata` version when present, whether the schema was
+inspected, whether the local table set and metadata version are compatible, and
+any `missing_tables`. Old DBs are easier to recognize from `missing_tables` such
+as `run_log` or `schema_metadata`, without relying only on SQLite error text.
 
 ### Operational Review Troubleshooting Examples
 
@@ -363,7 +364,9 @@ using SQLite read-only mode and do not repair, migrate, or replace the DB.
 When SQLite metadata can be read, `db.schema.inspected` is `true` and
 `db.schema.missing_tables` lists the expected schema tables that are absent. For
 corrupt files, schema inspection may remain `false` because even metadata could
-not be read.
+not be read. A full pre-metadata DB can be readable but still report
+`db.schema.metadata_present: false`, `detected_version: null`, and
+`compatible: false` until `init-db` applies the schema metadata table.
 
 ## Local Read-Only Web Panel
 
@@ -462,9 +465,11 @@ HTTP 400 with `{"error": "..."}` for invalid query parameters.
   - `db` includes `path`, `exists`, `readable`, `messages`, `audit_events`,
     `error_type`, `error`, and `schema`.
   - `db.schema` includes `expected_version`, `detected_version`, `inspected`,
-    `compatible`, `expected_tables`, `present_tables`, and `missing_tables`.
-    Old schemas usually have `inspected: true`, `compatible: false`, and one or
-    more `missing_tables`; corrupt DBs may have `inspected: false`.
+    `compatible`, `metadata_present`, `metadata_valid`, `expected_tables`,
+    `present_tables`, and `missing_tables`. Old schemas usually have
+    `inspected: true`, `compatible: false`, and one or more `missing_tables`;
+    full pre-metadata schemas have `metadata_present: false` and
+    `detected_version: null`; corrupt DBs may have `inspected: false`.
   - Missing DB: `db.exists: false`, `db.readable: false`, `runs: []`, run
     summary fields are `null`; no DB file or parent directory is created.
 
@@ -521,8 +526,10 @@ HTTP 400 with `{"error": "..."}` for invalid query parameters.
   - `safety` explicitly reports that diagnostics are read-only and that Gmail,
     Telegram, and Scheduler were not called or modified.
   - `db` uses the same shape as `/api/health` DB info.
-  - `db.schema.expected_version` is `1`. `detected_version` is `1` only when
-    all expected tables are present; otherwise it is `null`.
+  - `db.schema.expected_version` is `1`. `detected_version` comes from
+    `schema_metadata.schema_version` when present and parseable; otherwise it is
+    `null`. `compatible` is `true` only when all expected tables are present and
+    the detected schema version matches `expected_version`.
   - `notify_new` includes `latest`, `last_successful`,
     `last_successful_age_seconds`, and `recent_runs`.
   - `local_activity` includes nested `message_stats` and `run_log_events`

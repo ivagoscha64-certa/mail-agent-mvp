@@ -1,5 +1,15 @@
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS schema_metadata (
+    metadata_key TEXT PRIMARY KEY,
+    metadata_value TEXT NOT NULL
+);
+
+INSERT INTO schema_metadata(metadata_key, metadata_value)
+VALUES ('schema_version', '1')
+ON CONFLICT(metadata_key) DO UPDATE SET
+    metadata_value = excluded.metadata_value;
+
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL,

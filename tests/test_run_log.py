@@ -10,6 +10,22 @@ from mail_agent.config import load_settings
 from mail_agent.diagnostics import build_operational_review_payload
 
 
+def test_init_db_records_explicit_schema_version(tmp_path):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+
+    with db.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT metadata_value
+            FROM schema_metadata
+            WHERE metadata_key = 'schema_version'
+            """
+        ).fetchone()
+
+    assert row["metadata_value"] == "1"
+
+
 def test_run_log_tracks_latest_and_latest_success(tmp_path):
     db_path = tmp_path / "mail.sqlite3"
     db.init_db(db_path)
@@ -205,12 +221,15 @@ def test_health_command_json_handles_missing_db_without_creating_it(
                 "messages",
                 "recommendations",
                 "run_log",
+                "schema_metadata",
                 "spam_signals",
                 "telegram_notifications",
                 "unsubscribe_candidates",
             ],
             "expected_version": 1,
             "inspected": False,
+            "metadata_present": False,
+            "metadata_valid": False,
             "missing_tables": [],
             "present_tables": [],
         },
@@ -293,8 +312,11 @@ def test_health_command_json_includes_local_counts_runs_and_scheduler(
     assert payload["db"]["audit_events"] == 1
     assert payload["db"]["schema"]["compatible"] is True
     assert payload["db"]["schema"]["detected_version"] == 1
+    assert payload["db"]["schema"]["metadata_present"] is True
+    assert payload["db"]["schema"]["metadata_valid"] is True
     assert payload["db"]["schema"]["missing_tables"] == []
     assert "run_log" in payload["db"]["schema"]["present_tables"]
+    assert "schema_metadata" in payload["db"]["schema"]["present_tables"]
     assert payload["latest_notify_run"]["status"] == "completed"
     assert payload["last_successful_notify_run"]["notified_count"] == 1
     assert len(payload["runs"]) == 1
@@ -371,6 +393,9 @@ def test_health_command_json_handles_old_db_with_missing_run_log(
     assert payload["db"]["schema"]["inspected"] is True
     assert payload["db"]["schema"]["compatible"] is False
     assert "run_log" in payload["db"]["schema"]["missing_tables"]
+    assert "schema_metadata" in payload["db"]["schema"]["missing_tables"]
+    assert payload["db"]["schema"]["metadata_present"] is False
+    assert payload["db"]["schema"]["metadata_valid"] is False
     assert payload["db"]["schema"]["present_tables"] == ["audit_log", "messages"]
     assert payload["latest_notify_run"] is None
 
@@ -461,6 +486,8 @@ def test_operational_review_reports_healthy_db(monkeypatch, tmp_path):
     assert payload["db"]["readable"] is True
     assert payload["db"]["schema"]["compatible"] is True
     assert payload["db"]["schema"]["detected_version"] == 1
+    assert payload["db"]["schema"]["metadata_present"] is True
+    assert payload["db"]["schema"]["metadata_valid"] is True
     assert payload["db"]["schema"]["missing_tables"] == []
     assert payload["notify_new"]["latest"]["status"] == "completed"
     assert payload["thresholds"] == {
@@ -643,6 +670,9 @@ def test_operational_review_reports_old_db_missing_run_log(monkeypatch, tmp_path
     assert payload["db"]["schema"]["inspected"] is True
     assert payload["db"]["schema"]["compatible"] is False
     assert "run_log" in payload["db"]["schema"]["missing_tables"]
+    assert "schema_metadata" in payload["db"]["schema"]["missing_tables"]
+    assert payload["db"]["schema"]["metadata_present"] is False
+    assert payload["db"]["schema"]["metadata_valid"] is False
     assert payload["db"]["schema"]["present_tables"] == ["audit_log", "messages"]
     assert "db_unreadable" in {finding["code"] for finding in payload["findings"]}
 
@@ -665,6 +695,46 @@ def test_operational_review_reports_corrupt_db(monkeypatch, tmp_path):
     assert "database" in payload["db"]["error"]
     assert payload["db"]["schema"]["inspected"] is False
     assert payload["db"]["schema"]["compatible"] is None
+
+
+def test_health_reports_full_legacy_schema_without_metadata_as_incompatible(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "legacy.sqlite3"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        conn.execute("DROP TABLE schema_metadata")
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["mail-agent", "health", "--json", "--skip-scheduler"],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["db"]["exists"] is True
+    assert payload["db"]["readable"] is True
+    assert payload["db"]["schema"]["inspected"] is True
+    assert payload["db"]["schema"]["compatible"] is False
+    assert payload["db"]["schema"]["detected_version"] is None
+    assert payload["db"]["schema"]["metadata_present"] is False
+    assert payload["db"]["schema"]["metadata_valid"] is False
+    assert payload["db"]["schema"]["missing_tables"] == ["schema_metadata"]
+
+    review = build_operational_review_payload(
+        load_settings(),
+        limit=5,
+        sender_limit=3,
+    )
+    assert review["db"]["readable"] is True
+    assert review["db"]["schema"]["compatible"] is False
+    assert review["db"]["schema"]["detected_version"] is None
+    assert review["db"]["schema"]["metadata_present"] is False
+    assert review["db"]["schema"]["missing_tables"] == ["schema_metadata"]
 
 
 def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):

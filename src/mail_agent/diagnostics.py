@@ -24,6 +24,7 @@ EXPECTED_SCHEMA_TABLES = [
     "messages",
     "recommendations",
     "run_log",
+    "schema_metadata",
     "spam_signals",
     "telegram_notifications",
     "unsubscribe_candidates",
@@ -621,14 +622,34 @@ def inspect_schema(conn: sqlite3.Connection) -> dict:
     missing_tables = [
         table for table in EXPECTED_SCHEMA_TABLES if table not in present_tables
     ]
+    metadata_present = "schema_metadata" in present_tables
+    detected_version = None
+    if metadata_present:
+        try:
+            row = conn.execute(
+                """
+                SELECT metadata_value
+                FROM schema_metadata
+                WHERE metadata_key = 'schema_version'
+                """
+            ).fetchone()
+        except sqlite3.Error:
+            row = None
+        if row is not None:
+            try:
+                detected_version = int(row["metadata_value"])
+            except (TypeError, ValueError):
+                detected_version = None
+    metadata_valid = detected_version == DIAGNOSTIC_SCHEMA_VERSION
+    compatible = not missing_tables and detected_version == DIAGNOSTIC_SCHEMA_VERSION
     return {
-        "compatible": not missing_tables,
-        "detected_version": (
-            DIAGNOSTIC_SCHEMA_VERSION if not missing_tables else None
-        ),
+        "compatible": compatible,
+        "detected_version": detected_version,
         "expected_tables": EXPECTED_SCHEMA_TABLES,
         "expected_version": DIAGNOSTIC_SCHEMA_VERSION,
         "inspected": True,
+        "metadata_present": metadata_present,
+        "metadata_valid": metadata_valid,
         "missing_tables": missing_tables,
         "present_tables": present_tables,
     }
@@ -641,6 +662,8 @@ def _uninspected_schema_summary() -> dict:
         "expected_tables": EXPECTED_SCHEMA_TABLES,
         "expected_version": DIAGNOSTIC_SCHEMA_VERSION,
         "inspected": False,
+        "metadata_present": False,
+        "metadata_valid": False,
         "missing_tables": [],
         "present_tables": [],
     }

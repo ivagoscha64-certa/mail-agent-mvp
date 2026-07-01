@@ -210,7 +210,9 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                 ],
                 "risk": "medium",
                 "schema_compatible": True,
+                "schema_detected_version": 1,
                 "schema_inspected": True,
+                "schema_metadata_present": True,
                 "schema_missing_tables": [],
                 "status": "warning",
             },
@@ -228,7 +230,9 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                 ],
                 "risk": "medium",
                 "schema_compatible": True,
+                "schema_detected_version": 1,
                 "schema_inspected": True,
+                "schema_metadata_present": True,
                 "schema_missing_tables": [],
                 "status": "warning",
             },
@@ -245,7 +249,9 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                 ],
                 "risk": "high",
                 "schema_compatible": False,
+                "schema_detected_version": None,
                 "schema_inspected": True,
+                "schema_metadata_present": False,
                 "schema_missing_tables": [
                     "accounts",
                     "approval_actions",
@@ -253,6 +259,7 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                     "message_classifications",
                     "recommendations",
                     "run_log",
+                    "schema_metadata",
                     "spam_signals",
                     "telegram_notifications",
                     "unsubscribe_candidates",
@@ -272,7 +279,9 @@ def test_web_api_operational_review_includes_threshold_age_fields(
                 ],
                 "risk": "high",
                 "schema_compatible": None,
+                "schema_detected_version": None,
                 "schema_inspected": False,
+                "schema_metadata_present": False,
                 "schema_missing_tables": [],
                 "status": "critical",
             },
@@ -326,7 +335,15 @@ def test_operational_review_contract_parity_for_edge_cases(
     assert contracts[0]["db_readable"] is expected["db_readable"]
     assert contracts[0]["db_error_type"] == expected["db_error_type"]
     assert contracts[0]["schema_compatible"] is expected["schema_compatible"]
+    assert (
+        contracts[0]["schema_detected_version"]
+        == expected["schema_detected_version"]
+    )
     assert contracts[0]["schema_inspected"] is expected["schema_inspected"]
+    assert (
+        contracts[0]["schema_metadata_present"]
+        is expected["schema_metadata_present"]
+    )
     assert contracts[0]["schema_missing_tables"] == expected["schema_missing_tables"]
     assert contracts[0]["finding_codes"] == expected["finding_codes"]
     if "age" in expected:
@@ -1055,7 +1072,9 @@ def _review_contract(payload: dict) -> dict:
         ],
         "risk": payload["risk"],
         "schema_compatible": payload["db"]["schema"]["compatible"],
+        "schema_detected_version": payload["db"]["schema"]["detected_version"],
         "schema_inspected": payload["db"]["schema"]["inspected"],
+        "schema_metadata_present": payload["db"]["schema"]["metadata_present"],
         "schema_missing_tables": payload["db"]["schema"]["missing_tables"],
         "status": payload["status"],
         "thresholds": payload["thresholds"],

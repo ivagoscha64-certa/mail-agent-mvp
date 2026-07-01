@@ -9,6 +9,7 @@ from mail_agent.models import Classification, NormalizedMessage, utc_now_iso
 
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+SCHEMA_VERSION = 1
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -22,6 +23,19 @@ def connect(db_path: Path) -> sqlite3.Connection:
 def init_db(db_path: Path) -> None:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        record_schema_version(conn)
+
+
+def record_schema_version(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT INTO schema_metadata(metadata_key, metadata_value)
+        VALUES ('schema_version', ?)
+        ON CONFLICT(metadata_key) DO UPDATE SET
+            metadata_value = excluded.metadata_value
+        """,
+        (str(SCHEMA_VERSION),),
+    )
 
 
 def upsert_account(conn: sqlite3.Connection, provider: str, email: str, mode: str) -> None:
