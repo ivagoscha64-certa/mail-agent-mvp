@@ -266,6 +266,61 @@ as diagnostics: JSON responses include `exists: false`, `readable: false`, and
 empty result lists; the missing DB file and parent directory are not created by
 these reads.
 
+### Local Web JSON Contract
+
+All JSON endpoints are diagnostic `GET` endpoints. They read local config and
+SQLite only, skip Scheduler checks, do not call Gmail or Telegram, and return
+HTTP 400 with `{"error": "..."}` for invalid query parameters.
+
+- `GET /api/health?limit=`
+  - Query: `limit` integer, default `10`, minimum `1`.
+  - Response fields: `mode`, `backend`, `provider`, `account`, `scheduler`,
+    `db`, `latest_notify_run`, `last_successful_notify_run`, `runs`.
+  - `db` includes `path`, `exists`, `readable`, `messages`, `audit_events`,
+    `error_type`, and `error`.
+  - Missing DB: `db.exists: false`, `db.readable: false`, `runs: []`, run
+    summary fields are `null`; no DB file or parent directory is created.
+
+- `GET /api/runs?limit=`
+  - Query: `limit` integer, default `10`, minimum `1`.
+  - Response fields: `db`, `last_successful_notify_run`, `runs`.
+  - Run rows include `id`, `command`, `status`, `account`, `provider`,
+    `started_at`, `finished_at`, `limit`, count fields, and error fields.
+  - Missing DB: `runs: []`, `last_successful_notify_run: null`; no DB file or
+    parent directory is created.
+
+- `GET /api/audit-events?limit=&action=&status=&account=`
+  - Query: `limit` integer, default `25`, minimum `1`; `action`, `status`, and
+    `account` are trimmed exact-match filters.
+  - Response fields: `db`, `exists`, `readable`, `filters`, `error_type`,
+    `error`, `audit_events`.
+  - Audit rows include `id`, `account`, `message_uid`, `action`, `status`,
+    `reason`, `metadata`, and `created_at`.
+  - Missing DB: `exists: false`, `readable: false`, `audit_events: []`; filters
+    are still echoed; no DB file or parent directory is created.
+
+- `GET /api/message-stats?sender_limit=&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`
+  - Query: `sender_limit` integer, default `10`, minimum `1`; `limit` is accepted
+    as a backward-compatible alias when `sender_limit` is omitted; dates are
+    inclusive ISO date filters.
+  - Response fields: `db`, `exists`, `readable`, `filters`, `error_type`,
+    `error`, `total_messages`, `messages_by_day`, `top_senders`.
+  - Invalid dates or `date_from` after `date_to` return HTTP 400.
+  - Missing DB: `exists: false`, `readable: false`, `total_messages: null`,
+    empty stats lists; filters are still echoed; no DB file or parent directory
+    is created.
+
+- `GET /api/run-log-events?limit=&command=&status=&finished_from=YYYY-MM-DD&finished_to=YYYY-MM-DD`
+  - Query: `limit` integer, default `10`, minimum `1`; `command` and `status`
+    are trimmed exact-match filters; finished dates are inclusive ISO date
+    filters based on `finished_at`.
+  - Response fields: `db`, `exists`, `readable`, `filters`, `error_type`,
+    `error`, `run_log_events`.
+  - Run log rows use the same shape as `/api/runs` run rows.
+  - Invalid dates or `finished_from` after `finished_to` return HTTP 400.
+  - Missing DB: `exists: false`, `readable: false`, `run_log_events: []`;
+    filters are still echoed; no DB file or parent directory is created.
+
 ## Operations Checklist
 
 Before enabling unattended polling:
