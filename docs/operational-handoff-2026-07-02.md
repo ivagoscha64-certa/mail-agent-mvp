@@ -5,10 +5,10 @@
 The MVP is healthy for read-only local operation.
 
 - Repository branch: `master`.
-- Configured account: `iva196464@gmail.com`.
+- Configured account: `<configured-account>`.
 - Mode: `read_only`.
 - Backend/provider: Gmail API / `gmail`.
-- SQLite DB is present and readable at `E:\AI\mail-agent-mvp\data\mail-agent.sqlite3`.
+- SQLite DB is expected at `data/mail-agent.sqlite3` in the local checkout.
 - Schema check: `compatible=true`, `metadata_present=true`, `detected_version=1`.
 - Operational review: `status=ok`, `risk=low`.
 - Windows scheduled task: `MailAgentNotifyNew`, registered, `Ready`, last result `0`.
@@ -30,26 +30,19 @@ The MVP is healthy for read-only local operation.
 - CI runs pytest.
 - SQLite schema version is explicit in `schema_metadata`.
 - Project paths are derived from the repository root instead of fragile process paths.
-- `.env` explicitly sets `GMAIL_ACCOUNT_EMAIL=iva196464@gmail.com`.
+- `.env` explicitly sets `GMAIL_ACCOUNT_EMAIL` for the configured account.
 - Local SQLite DB has been migrated to schema version `1`.
 
-## Live Canary
+## Live Canary Guidance
 
-Controlled live canary was run before this handoff with:
+Live canary checks are intentionally excluded from routine public handoff
+details because they can expose local account and run-history information.
+When there is explicit operational intent, run a controlled `notify-new` canary
+with conservative limits and record only sanitized aggregate outcomes in public
+docs.
 
-```powershell
-.\.venv\Scripts\python.exe -m mail_agent notify-new --limit 25
-```
-
-The canary completed successfully with `new=0`, `existing=25`, and `notified=0`.
-Telegram was not called because there were no new pending important messages.
-
-Read-only handoff diagnostics later observed newer scheduled `notify-new` runs.
-The latest observed run was `id=101`, `status=completed`, `new=0`,
-`existing=25`, `notified=0`, finished at `2026-07-01T23:24:07+00:00`.
-
-Historical failed run `id=94` for account `your.email@example.com` is retained
-as history and should not be edited or deleted.
+Keep personal account identifiers, exact local paths, and detailed live run
+history in private operator notes.
 
 ## Daily Diagnostics
 
@@ -81,7 +74,7 @@ Use these commands for deeper routine read-only checks:
 
 Expected healthy signals:
 
-- `account` / `config.account` is `iva196464@gmail.com`.
+- `account` / `config.account` matches the configured account.
 - `mode` / `config.mode` is `read_only`.
 - DB schema is compatible with metadata present and detected version `1`.
 - Latest `notify-new` run is `completed`.
@@ -93,10 +86,11 @@ Telegram notifications require explicitly running `notify-new`.
 
 ## Backup
 
-SQLite backup before the schema/local ops work:
+SQLite backup before the schema/local ops work is kept outside the public
+repository, for example:
 
 ```text
-E:\AI\_tmp\mail-agent.sqlite3.bak-20260702-082411
+<private-backup-location>/mail-agent.sqlite3.bak-<timestamp>
 ```
 
 Do not delete this backup during routine maintenance.
