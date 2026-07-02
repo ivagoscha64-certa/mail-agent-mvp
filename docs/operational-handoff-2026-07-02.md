@@ -53,7 +53,24 @@ as history and should not be edited or deleted.
 
 ## Daily Diagnostics
 
-Use these commands for routine read-only checks:
+Use the compact operator summary as the default daily command:
+
+```powershell
+.\.venv\Scripts\python.exe -m mail_agent ops
+```
+
+`ops` is read-only: it does not call Gmail or Telegram and does not write to
+SQLite. It reports status/risk, account, backend, mode, DB schema compatibility,
+latest `notify-new` freshness, Scheduler state, finding codes, and the next
+operator action.
+
+For a safe local-only check that also skips the Windows Task Scheduler query:
+
+```powershell
+.\.venv\Scripts\python.exe -m mail_agent ops --skip-scheduler
+```
+
+Use these commands for deeper routine read-only checks:
 
 ```powershell
 .\.venv\Scripts\python.exe -m mail_agent health --skip-scheduler --json
@@ -70,6 +87,9 @@ Expected healthy signals:
 - Latest `notify-new` run is `completed`.
 - Scheduler is registered and `Ready`.
 - Review reports `status=ok` and `risk=low`.
+
+Live side effects are separate from daily diagnostics. Polling Gmail and sending
+Telegram notifications require explicitly running `notify-new`.
 
 ## Backup
 

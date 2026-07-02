@@ -212,12 +212,16 @@ mail-agent ops
 `ops` is read-only and prints status/risk, account, backend, mode, DB schema
 compatibility, latest and last successful `notify-new` freshness, Scheduler
 state, finding codes, and a short next-action phrase. It reuses the local
-operational review checks and does not call Gmail or Telegram. To skip the Task
-Scheduler query:
+operational review checks, does not call Gmail or Telegram, and does not write
+to SQLite. To skip the Task Scheduler query and read only local config and
+SQLite state:
 
 ```powershell
 mail-agent ops --skip-scheduler
 ```
+
+Live side effects are separate and require explicitly running commands such as
+`notify-new`; daily `ops` checks do not poll Gmail or send Telegram messages.
 
 To generate a minimal local operational review without calling Gmail, Telegram,
 or Task Scheduler:
