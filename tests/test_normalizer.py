@@ -11,7 +11,7 @@ def test_normalizer_stores_rfc_date_as_iso_for_message_stats(monkeypatch, tmp_pa
     db.init_db(db_path)
     message = EmailMessage()
     message["From"] = "sender@example.com"
-    message["To"] = "iva196464@gmail.com"
+    message["To"] = "configured-account@example.com"
     message["Subject"] = "Gmail-like date"
     message["Date"] = "Wed, 01 Jul 2026 20:32:39 +1000"
     message["Message-ID"] = "<uid-1@example.com>"
@@ -19,7 +19,7 @@ def test_normalizer_stores_rfc_date_as_iso_for_message_stats(monkeypatch, tmp_pa
 
     normalized = normalize_imap_message(
         provider=Provider.GMAIL,
-        account="iva196464@gmail.com",
+        account="configured-account@example.com",
         uid="uid-1",
         folder="INBOX",
         message=message,
@@ -55,7 +55,7 @@ def test_normalizer_uses_none_for_missing_or_invalid_date_header():
 def _normalized_date(message: EmailMessage) -> str | None:
     return normalize_imap_message(
         provider=Provider.GMAIL,
-        account="iva196464@gmail.com",
+        account="configured-account@example.com",
         uid="uid",
         folder="INBOX",
         message=message,

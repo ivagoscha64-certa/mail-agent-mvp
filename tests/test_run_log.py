@@ -35,7 +35,7 @@ def test_run_log_tracks_latest_and_latest_success(tmp_path):
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:00:00+00:00",
             finished_at="2026-06-30T00:00:03+00:00",
@@ -48,7 +48,7 @@ def test_run_log_tracks_latest_and_latest_success(tmp_path):
             conn,
             command="notify-new",
             status="failed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:10:00+00:00",
             finished_at="2026-06-30T00:10:01+00:00",
@@ -83,7 +83,7 @@ def test_fetch_run_logs_returns_recent_rows_with_limit(tmp_path):
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:00:00+00:00",
             finished_at="2026-06-30T00:00:03+00:00",
@@ -92,7 +92,7 @@ def test_fetch_run_logs_returns_recent_rows_with_limit(tmp_path):
             conn,
             command="notify-new",
             status="failed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:10:00+00:00",
             finished_at="2026-06-30T00:10:01+00:00",
@@ -104,7 +104,7 @@ def test_fetch_run_logs_returns_recent_rows_with_limit(tmp_path):
             conn,
             command="check-mail",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:20:00+00:00",
             finished_at="2026-06-30T00:20:01+00:00",
@@ -129,7 +129,7 @@ def test_runs_command_can_print_json(monkeypatch, capsys, tmp_path):
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:00:00+00:00",
             finished_at="2026-06-30T00:00:03+00:00",
@@ -142,7 +142,7 @@ def test_runs_command_can_print_json(monkeypatch, capsys, tmp_path):
             conn,
             command="notify-new",
             status="failed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:10:00+00:00",
             finished_at="2026-06-30T00:10:01+00:00",
@@ -257,7 +257,7 @@ def test_health_command_json_includes_local_counts_runs_and_scheduler(
                 links_json, text, html, created_at
             )
             VALUES (
-                'gmail', 'iva196464@gmail.com', 'uid-1', 'message-1',
+                'gmail', 'configured-account@example.com', 'uid-1', 'message-1',
                 'sender@example.com', '[]', 'Hello', '{}', '[]', '[]',
                 '', '', '2026-06-30T00:00:00+00:00'
             )
@@ -276,7 +276,7 @@ def test_health_command_json_includes_local_counts_runs_and_scheduler(
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:00:00+00:00",
             finished_at="2026-06-30T00:00:03+00:00",
@@ -462,7 +462,7 @@ def test_operational_review_reports_healthy_db(monkeypatch, tmp_path):
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at=finished_at,
             finished_at=finished_at,
@@ -514,7 +514,7 @@ def test_operational_review_warns_when_success_is_older_than_warning_threshold(
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at=finished_at,
             finished_at=finished_at,
@@ -549,7 +549,7 @@ def test_operational_review_critical_when_success_is_older_than_critical_thresho
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at=finished_at,
             finished_at=finished_at,
@@ -583,7 +583,7 @@ def test_operational_review_warns_when_success_timestamp_cannot_be_parsed(
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="not-a-timestamp",
             finished_at="not-a-timestamp",
@@ -614,7 +614,7 @@ def test_operational_review_reports_latest_failed_run(monkeypatch, tmp_path):
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:00:00+00:00",
             finished_at="2026-06-30T00:00:03+00:00",
@@ -623,7 +623,7 @@ def test_operational_review_reports_latest_failed_run(monkeypatch, tmp_path):
             conn,
             command="notify-new",
             status="failed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:10:00+00:00",
             finished_at="2026-06-30T00:10:01+00:00",
@@ -746,7 +746,7 @@ def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at=finished_at,
             finished_at=finished_at,
@@ -777,7 +777,7 @@ def test_ops_command_prints_compact_ok_summary(monkeypatch, capsys, tmp_path):
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at=finished_at,
             finished_at=finished_at,
@@ -788,7 +788,7 @@ def test_ops_command_prints_compact_ok_summary(monkeypatch, capsys, tmp_path):
         )
 
     monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
-    monkeypatch.setenv("GMAIL_ACCOUNT_EMAIL", "iva196464@gmail.com")
+    monkeypatch.setenv("GMAIL_ACCOUNT_EMAIL", "configured-account@example.com")
     monkeypatch.setattr(
         "mail_agent.__main__._fetch_scheduler_status",
         lambda task_name: {
@@ -807,7 +807,7 @@ def test_ops_command_prints_compact_ok_summary(monkeypatch, capsys, tmp_path):
 
     output = capsys.readouterr().out
     assert "Operational status: ok / low" in output
-    assert "Account: iva196464@gmail.com" in output
+    assert "Account: configured-account@example.com" in output
     assert "Mode: read_only" in output
     assert "DB: compatible schema v1" in output
     assert "Latest notify-new: completed at " in output
@@ -832,7 +832,7 @@ def test_ops_command_latest_failed_run_prints_action_summary(
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:00:00+00:00",
             finished_at="2026-06-30T00:00:03+00:00",
@@ -841,7 +841,7 @@ def test_ops_command_latest_failed_run_prints_action_summary(
             conn,
             command="notify-new",
             status="failed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at="2026-06-30T00:10:00+00:00",
             finished_at="2026-06-30T00:10:01+00:00",
@@ -901,7 +901,7 @@ def test_ops_command_skip_scheduler_avoids_scheduler_fetch(
             conn,
             command="notify-new",
             status="completed",
-            account="iva196464@gmail.com",
+            account="configured-account@example.com",
             provider="gmail",
             started_at=finished_at,
             finished_at=finished_at,

@@ -61,12 +61,12 @@ def test_bot_chat_filter_is_deny_by_default():
 def _message(uid: str, subject: str) -> NormalizedMessage:
     return NormalizedMessage(
         provider=Provider.GMAIL,
-        account="iva196464@gmail.com",
+        account="configured-account@example.com",
         message_uid=uid,
         message_id=f"<{uid}@example.test>",
         thread_id=f"thread-{uid}",
         sender="sender@example.test",
-        recipients=["iva196464@gmail.com"],
+        recipients=["configured-account@example.com"],
         subject=subject,
         date="2026-06-30T00:00:00+00:00",
         text="Hello",

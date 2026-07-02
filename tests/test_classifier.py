@@ -22,12 +22,12 @@ def test_classifier_matches_russian_urgent_risk_words():
 def _message(*, subject: str, text: str) -> NormalizedMessage:
     return NormalizedMessage(
         provider=Provider.GMAIL,
-        account="iva196464@gmail.com",
+        account="configured-account@example.com",
         message_uid="uid-1",
         message_id="<uid-1@example.test>",
         thread_id="thread-1",
         sender="sender@example.test",
-        recipients=["iva196464@gmail.com"],
+        recipients=["configured-account@example.com"],
         subject=subject,
         date="2026-06-30T00:00:00+00:00",
         text=text,
