@@ -68,6 +68,15 @@ def main() -> None:
         action="store_true",
         help="Print a read-only operational review JSON payload.",
     )
+    ops = subparsers.add_parser("ops")
+    ops.add_argument("--limit", type=int, default=10)
+    ops.add_argument("--sender-limit", type=int, default=10)
+    ops.add_argument("--task-name", default="MailAgentNotifyNew")
+    ops.add_argument(
+        "--skip-scheduler",
+        action="store_true",
+        help="Do not query Windows Task Scheduler status.",
+    )
     web = subparsers.add_parser("web")
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8765)
@@ -181,6 +190,22 @@ def main() -> None:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             return
         _print_operational_review_payload(payload)
+        return
+
+    if args.command == "ops":
+        if args.limit < 1:
+            raise SystemExit("ERROR: --limit must be at least 1")
+        if args.sender_limit < 1:
+            raise SystemExit("ERROR: --sender-limit must be at least 1")
+        payload = build_operational_review_payload(
+            settings,
+            limit=args.limit,
+            sender_limit=args.sender_limit,
+        )
+        scheduler = None
+        if not args.skip_scheduler:
+            scheduler = _fetch_scheduler_status(args.task_name)
+        _print_ops_payload(payload, scheduler=scheduler)
         return
 
     if args.command == "status":
@@ -532,6 +557,129 @@ def _print_operational_review_payload(payload: dict) -> None:
     print(f"Account: {payload['config']['account']}")
     for finding in payload["findings"]:
         print(f"- {finding['level']}: {finding['code']} - {finding['message']}")
+
+
+def _print_ops_payload(payload: dict, *, scheduler: dict | None) -> None:
+    config = payload["config"]
+    notify_new = payload["notify_new"]
+    findings = payload["findings"]
+
+    print(f"Operational status: {payload['status']} / {payload['risk']}")
+    print(f"Account: {config['account']}")
+    print(f"Backend: {config['backend']} ({config['provider']})")
+    print(f"Mode: {config['mode']}")
+    print(f"DB: {_format_ops_db(payload['db'])}")
+    print(f"Latest notify-new: {_format_ops_latest_notify(payload)}")
+    print(
+        "Last success age: "
+        f"{_format_age_seconds(notify_new['last_successful_age_seconds'])}"
+    )
+    print(f"Scheduler: {_format_ops_scheduler(scheduler)}")
+    print("Findings: " + ", ".join(finding["code"] for finding in findings))
+    print(f"Next action: {_ops_next_action(payload)}")
+
+
+def _format_ops_db(db_info: dict) -> str:
+    schema = db_info["schema"]
+    if not db_info["exists"]:
+        return f"missing ({db_info['path']})"
+    if not db_info["readable"]:
+        return (
+            "unreadable "
+            f"({db_info['error_type']}: {db_info['error']})"
+        )
+    if schema["compatible"]:
+        return f"compatible schema v{schema['detected_version']}"
+
+    missing_tables = ", ".join(schema["missing_tables"]) or "none"
+    return (
+        "incompatible schema "
+        f"detected={schema['detected_version']} missing={missing_tables}"
+    )
+
+
+def _format_ops_latest_notify(payload: dict) -> str:
+    latest = payload["notify_new"]["latest"]
+    if latest is None:
+        return "none"
+
+    age = _age_seconds_between(payload["generated_at"], latest["finished_at"])
+    text = (
+        f"{latest['status']} at {latest['finished_at']} "
+        f"age {_format_age_seconds(age)}"
+    )
+    if latest["status"] == "failed":
+        error_parts = [
+            latest["error_phase"] or "unknown",
+            latest["error_type"] or "Error",
+            latest["error"] or "",
+        ]
+        text += " error=" + ": ".join(part for part in error_parts if part)
+    return text
+
+
+def _format_ops_scheduler(scheduler: dict | None) -> str:
+    if scheduler is None:
+        return "skipped"
+    if not scheduler.get("available"):
+        return f"unavailable ({scheduler.get('error')})"
+    if scheduler["registered"]:
+        return (
+            "registered "
+            f"{scheduler['state']} next {scheduler['next_run']}"
+        )
+    return f"task '{scheduler['task_name']}' is not registered"
+
+
+def _ops_next_action(payload: dict) -> str:
+    finding_codes = {finding["code"] for finding in payload["findings"]}
+    if "latest_notify_new_failed" in finding_codes:
+        return "inspect latest notify-new error and rerun after fixing it"
+    if "db_unreadable" in finding_codes:
+        return "inspect or restore the local SQLite DB"
+    if "db_missing" in finding_codes:
+        return "initialize or restore the local SQLite DB"
+    if "notify_new_success_critical_age" in finding_codes:
+        return "check scheduler and run notify-new after confirming config"
+    if "notify_new_success_warning_age" in finding_codes:
+        return "check scheduler freshness"
+    if "notify_new_never_recorded" in finding_codes:
+        return "run the first controlled notify-new check"
+    if "notify_new_success_age_unknown" in finding_codes:
+        return "inspect notify-new timestamps in run_log"
+    if payload["status"] == "ok":
+        return "no action needed"
+    return "review findings"
+
+
+def _age_seconds_between(generated_at: str, finished_at: str | None) -> int | None:
+    if not finished_at:
+        return None
+    try:
+        generated = _parse_iso_datetime(generated_at)
+        finished = _parse_iso_datetime(finished_at)
+    except (TypeError, ValueError):
+        return None
+    return max(0, int((generated - finished).total_seconds()))
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _format_age_seconds(seconds: int | None) -> str:
+    if seconds is None:
+        return "unknown"
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
 
 
 def _write_notify_run_log(db_path: Path, payload: dict) -> None:

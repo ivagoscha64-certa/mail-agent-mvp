@@ -768,6 +768,160 @@ def test_review_command_can_print_json(monkeypatch, capsys, tmp_path):
     assert payload["notify_new"]["last_successful_age_seconds"] < 1800
 
 
+def test_ops_command_prints_compact_ok_summary(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    finished_at = _iso_seconds_ago(60)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at=finished_at,
+            finished_at=finished_at,
+            limit_value=25,
+            new_count=0,
+            existing_count=25,
+            notified_count=0,
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setenv("GMAIL_ACCOUNT_EMAIL", "iva196464@gmail.com")
+    monkeypatch.setattr(
+        "mail_agent.__main__._fetch_scheduler_status",
+        lambda task_name: {
+            "available": True,
+            "last_result": 0,
+            "last_run": "2026-07-02T08:20:00+10:00",
+            "next_run": "2026-07-02T08:30:00+10:00",
+            "registered": True,
+            "state": "Ready",
+            "task_name": task_name,
+        },
+    )
+    monkeypatch.setattr("sys.argv", ["mail-agent", "ops", "--limit", "2"])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Operational status: ok / low" in output
+    assert "Account: iva196464@gmail.com" in output
+    assert "Mode: read_only" in output
+    assert "DB: compatible schema v1" in output
+    assert "Latest notify-new: completed at " in output
+    assert "Last success age: " in output
+    assert "Scheduler: registered Ready next 2026-07-02T08:30:00+10:00" in output
+    assert (
+        "Findings: db_readable, latest_notify_new_completed, "
+        "notify_new_success_fresh"
+    ) in output
+    assert "Next action: no action needed" in output
+
+
+def test_ops_command_latest_failed_run_prints_action_summary(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:00:00+00:00",
+            finished_at="2026-06-30T00:00:03+00:00",
+        )
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="failed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at="2026-06-30T00:10:00+00:00",
+            finished_at="2026-06-30T00:10:01+00:00",
+            error_phase="telegram_send",
+            error_type="RuntimeError",
+            error="Telegram unavailable",
+        )
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr("sys.argv", ["mail-agent", "ops", "--skip-scheduler"])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "Operational status: critical / high" in output
+    assert "Latest notify-new: failed at 2026-06-30T00:10:01+00:00" in output
+    assert "error=telegram_send: RuntimeError: Telegram unavailable" in output
+    assert "Findings: db_readable, latest_notify_new_failed" in output
+    assert (
+        "Next action: inspect latest notify-new error and rerun after fixing it"
+        in output
+    )
+
+
+def test_ops_command_missing_db_does_not_create_db_and_prints_warning(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "missing-dir" / "missing.sqlite3"
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr("sys.argv", ["mail-agent", "ops", "--skip-scheduler"])
+
+    main()
+
+    output = capsys.readouterr().out
+    assert db_path.exists() is False
+    assert db_path.parent.exists() is False
+    assert "Operational status: warning / medium" in output
+    assert f"DB: missing ({db_path})" in output
+    assert "Latest notify-new: none" in output
+    assert "Scheduler: skipped" in output
+    assert "Findings: db_missing, notify_new_never_recorded" in output
+    assert "Next action: initialize or restore the local SQLite DB" in output
+
+
+def test_ops_command_skip_scheduler_avoids_scheduler_fetch(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    db_path = tmp_path / "mail.sqlite3"
+    db.init_db(db_path)
+    finished_at = _iso_seconds_ago(60)
+    with db.connect(db_path) as conn:
+        db.insert_run_log(
+            conn,
+            command="notify-new",
+            status="completed",
+            account="iva196464@gmail.com",
+            provider="gmail",
+            started_at=finished_at,
+            finished_at=finished_at,
+        )
+
+    def fail_scheduler_fetch(task_name):
+        raise AssertionError(f"scheduler should not be fetched: {task_name}")
+
+    monkeypatch.setenv("MAIL_AGENT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "mail_agent.__main__._fetch_scheduler_status",
+        fail_scheduler_fetch,
+    )
+    monkeypatch.setattr("sys.argv", ["mail-agent", "ops", "--skip-scheduler"])
+
+    main()
+
+    assert "Scheduler: skipped" in capsys.readouterr().out
+
+
 def test_scheduler_status_handles_json_parse_error(monkeypatch, tmp_path):
     _write_scheduler_script(tmp_path)
     monkeypatch.setattr("mail_agent.__main__.shutil.which", lambda name: "powershell")
